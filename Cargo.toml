@@ -17,3 +17,8 @@ lto = true
 codegen-units = 1
 panic = "abort"
 strip = true
+
+# jiff-tzdb 0.1.9 on crates.io carries tzdata 2026e; this copy is regenerated from 2026f
+# by scripts/vendor-tzdb.sh. Drop the patch once crates.io ships 2026f or newer.
+[patch.crates-io]
+jiff-tzdb = { path = "vendor/jiff-tzdb" }
