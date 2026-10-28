@@ -93,7 +93,7 @@ pub fn parse(text: &str, forced: Option<Dialect>) -> Result<Schedule, Error> {
     Ok(s)
 }
 
-struct Parser(Dialect);
+pub(crate) struct Parser(pub(crate) Dialect);
 
 impl Parser {
     fn bounds(&self, kind: Kind) -> (u16, u16) {
@@ -267,7 +267,7 @@ impl Parser {
     }
 
     /// Expands `*`, `n`, `a-b`, `a/s` and `a-b/s`.
-    fn values(&self, kind: Kind, item: &str) -> Result<Vec<u16>, Error> {
+    pub(crate) fn values(&self, kind: Kind, item: &str) -> Result<Vec<u16>, Error> {
         let (lo, hi) = self.bounds(kind);
         // Hints name Saturday as the last day, not Unix's second Sunday.
         let max = if kind == DayOfWeek { hi.min(6) } else { hi };

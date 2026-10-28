@@ -12,7 +12,7 @@ const DAYS: [&str; 7] = [
     "Friday",
     "Saturday",
 ];
-const MONTHS: [&str; 12] = [
+pub(crate) const MONTHS: [&str; 12] = [
     "January",
     "February",
     "March",
@@ -327,7 +327,7 @@ fn clock(h: u16, m: u16, s: u16, seconds: bool) -> String {
 }
 
 /// "1, 4 and 9 through 13": runs of 3 or more become ranges.
-fn numbers(v: &[u16]) -> String {
+pub(crate) fn numbers(v: &[u16]) -> String {
     let items = v.chunk_by(|a, b| a + 1 == *b).flat_map(|run| match run {
         [a, .., b] if run.len() >= 3 => vec![format!("{a} through {b}")],
         _ => run.iter().map(u16::to_string).collect(),
