@@ -1,6 +1,6 @@
 //! Runs the built binary the way people and agents do.
 
-use std::io::Read;
+use std::io::{Read, Write};
 use std::process::{Command, Output, Stdio};
 
 use serde_json::{Value, json};
@@ -647,4 +647,42 @@ fn ends_quietly_when_stdout_closes() {
         .read_to_string(&mut err)
         .unwrap();
     assert_eq!((child.wait().unwrap().code(), err.as_str()), (Some(0), ""));
+}
+
+#[test]
+#[ignore = "known bug: ui panics and mcp exits 3 when stdout is closed"]
+fn servers_end_quietly_when_stdout_closes() {
+    for args in [&["ui", "--no-open"][..], &["mcp"]] {
+        let mut child = time_cron(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        drop(child.stdout.take());
+        let mut stdin = child.stdin.take().unwrap();
+        writeln!(stdin, r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{"protocolVersion":"2025-11-25","capabilities":{{}},"clientInfo":{{"name":"t","version":"1"}}}}}}"#).unwrap();
+        let start = std::time::Instant::now();
+        let mut status = None;
+        while status.is_none() && start.elapsed().as_secs() < 2 {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            status = child.try_wait().unwrap();
+        }
+        if status.is_none() {
+            assert_eq!(args[0], "ui", "mcp keeps running with nowhere to answer");
+            child.kill().unwrap();
+        }
+        let mut err = String::new();
+        child
+            .stderr
+            .take()
+            .unwrap()
+            .read_to_string(&mut err)
+            .unwrap();
+        child.wait().unwrap();
+        if let Some(status) = status {
+            assert_eq!(status.code(), Some(0), "{args:?}: {err}");
+        }
+        assert_eq!(err, "", "{args:?}");
+    }
 }

@@ -239,3 +239,148 @@ fn takes_debug_on_every_command() {
         .unwrap();
     assert!(!String::from_utf8_lossy(&out.stderr).contains("'--debug'"));
 }
+
+/// A field of a random Unix expression: its text and the values it matches.
+fn random_field(seed: &mut u64, lo: u16, hi: u16) -> (String, Vec<u16>) {
+    let mut roll = |n: u16| {
+        *seed ^= *seed << 13;
+        *seed ^= *seed >> 7;
+        *seed ^= *seed << 17;
+        (*seed % u64::from(n)) as u16
+    };
+    let span = hi - lo + 1;
+    let a = lo + roll(span);
+    let b = a + roll(hi - a + 1);
+    let step = 1 + roll(span);
+    match roll(6) {
+        0 => ("*".into(), (lo..=hi).collect()),
+        1 => (
+            format!("*/{step}"),
+            (lo..=hi).step_by(step.into()).collect(),
+        ),
+        2 => (a.to_string(), vec![a]),
+        3 => (format!("{a}-{b}"), (a..=b).collect()),
+        4 => (
+            format!("{a}-{b}/{step}"),
+            (a..=b).step_by(step.into()).collect(),
+        ),
+        _ => (format!("{a},{b}"), vec![a, b]),
+    }
+}
+
+/// Generated Unix schedules agree with a day-by-day reading of cronie's rules in UTC.
+#[test]
+fn matches_an_independent_reading_of_unix_cron() {
+    let mut seed = 0x5eed_c0de_u64;
+    for _ in 0..120 {
+        let [minute, hour, dom, month, dow] = [(0, 59), (0, 23), (1, 31), (1, 12), (0, 7)]
+            .map(|(lo, hi)| random_field(&mut seed, lo, hi));
+        let expr = [&minute, &hour, &dom, &month, &dow]
+            .map(|f| f.0.as_str())
+            .join(" ");
+        let day_rule_and = dom.0.starts_with('*') || dow.0.starts_with('*');
+        let mut want = vec![];
+        let mut day = jiff::civil::date(2026, 10, 29);
+        while want.len() < 20 && day.year() < 2200 {
+            let wd = day.weekday().to_sunday_zero_offset() as u16;
+            let on_dom = dom.1.contains(&(day.day() as u16));
+            let on_dow = dow.1.iter().any(|d| d % 7 == wd);
+            let on_day = if day_rule_and {
+                on_dom && on_dow
+            } else {
+                on_dom || on_dow
+            };
+            if month.1.contains(&(day.month() as u16)) && on_day {
+                let mut times: Vec<(u16, u16)> = hour
+                    .1
+                    .iter()
+                    .flat_map(|h| minute.1.iter().map(move |m| (*h, *m)))
+                    .collect();
+                times.sort();
+                times.dedup();
+                for (h, m) in times {
+                    if (day, h, m) != (jiff::civil::date(2026, 10, 29), 0, 0) && want.len() < 20 {
+                        want.push(format!("{day}T{h:02}:{m:02}:00Z"));
+                    }
+                }
+            }
+            day = day.tomorrow().unwrap();
+        }
+        let (code, v) = json(&["next", &expr, "--tz", UTC, "--from", START, "--count", "20"]);
+        if want.is_empty() {
+            assert_eq!(
+                (code, &v["error"]["code"]),
+                (1, &"never_runs".into()),
+                "{expr}"
+            );
+        } else {
+            assert_eq!(code, 0, "{expr}: {v}");
+            assert_eq!(strings(&v, "runs", "utc"), want, "{expr}");
+        }
+    }
+}
+
+#[test]
+fn lists_the_same_first_runs_whatever_the_count() {
+    for (expr, tz, from) in [
+        ("*/30 1 * * *", NY, AUTUMN),
+        ("30 1 * * *", NY, AUTUMN),
+        ("0 0/20 1 * * ?", NY, AUTUMN),
+        ("cron(30 1 * * ? *)", NY, AUTUMN),
+        ("*/15 2 * * *", NY, SPRING),
+        ("0 15 1 * * ?", "Australia/Lord_Howe", "2027-04-03T12:00"),
+        (
+            "*/30 * * * *",
+            "America/Goose_Bay",
+            "1988-10-29T23:00:00-02:00",
+        ),
+        ("0 */6 * * *", "America/Santiago", "2027-04-03T12:00"),
+    ] {
+        let all = next(expr, tz, from, "20");
+        let utc = strings(&all, "runs", "utc");
+        assert!(utc.is_sorted(), "{expr}: {utc:?}");
+        for count in [1, 2, 3, 5, 8] {
+            let some = next(expr, tz, from, &count.to_string());
+            assert_eq!(
+                some["runs"].as_array().unwrap()[..],
+                all["runs"].as_array().unwrap()[..count],
+                "{expr} --count {count}"
+            );
+        }
+    }
+}
+
+#[test]
+#[ignore = "known bug: an offset with seconds is rounded but the wall time kept, so `time` is 30 s off"]
+fn every_time_names_the_same_instant_as_its_utc() {
+    let instant = |s: &str| {
+        s.parse::<jiff::Timestamp>()
+            .unwrap_or_else(|e| panic!("{s}: {e}"))
+    };
+    for from in ["1971-01-01", "1971-06-01T00:00:00Z", "1972-01-06T12:00"] {
+        let v = next("0 0 * * *", "Africa/Monrovia", from, "3");
+        for r in v["runs"].as_array().unwrap() {
+            let (time, utc) = (r["time"].as_str().unwrap(), r["utc"].as_str().unwrap());
+            assert_eq!(instant(time), instant(utc), "{from}: {time} vs {utc}");
+        }
+    }
+    let v = next("0 0 * * *", "Africa/Monrovia", "1971-06-01T00:00:00Z", "1");
+    assert_eq!(
+        instant(v["from"].as_str().unwrap()),
+        instant("1971-06-01T00:00:00Z")
+    );
+}
+
+#[test]
+#[ignore = "known bug: convert doesn't say the target scheduler handles DST differently"]
+fn warns_that_dst_handling_changes_across_dialects() {
+    for (expr, to) in [
+        ("0 0/30 2 * * ?", "unix"),
+        ("30 2 * * *", "quartz"),
+        ("cron(30 2 * * ? *)", "unix"),
+    ] {
+        let (code, v) = json(&["convert", expr, "--to", to]);
+        assert_eq!(code, 0, "{expr}: {v}");
+        assert!(!codes(&v).is_empty(), "{expr} -> {to}: {v}");
+    }
+}

@@ -260,6 +260,7 @@ fn refuses_repeated_headers_and_short_bodies() {
     for headers in [
         "Host: evil.example\r\nHost: 127.0.0.1:{port}",
         "Host: 127.0.0.1:{port}\r\nOrigin: http://evil.example\r\nOrigin: http://127.0.0.1:{port}",
+        "Host: 127.0.0.1:{port}\r\nContent-Length: 0",
     ] {
         assert_ne!(post(headers, body.len()), 200, "{headers}");
     }
@@ -267,6 +268,19 @@ fn refuses_repeated_headers_and_short_bodies() {
     let hidden =
         "GET / HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nNoColon\r\nOrigin: http://evil.example";
     assert_ne!(server.send(hidden, b"").0, 200);
+}
+
+#[test]
+fn answers_concurrent_clients_while_one_stalls() {
+    let server = Server::start(&["--no-open"]);
+    let _stalled = TcpStream::connect(("127.0.0.1", server.port)).unwrap();
+    let request = json!({"op": "next", "expression": "*/15 2 * * *", "timezone": "America/New_York", "from": "2027-03-13T12:00"});
+    let answers: Vec<(u16, Value)> = std::thread::scope(|s| {
+        let posts: Vec<_> = (0..16).map(|_| s.spawn(|| server.post(&request))).collect();
+        posts.into_iter().map(|p| p.join().unwrap()).collect()
+    });
+    assert_eq!(answers[0].0, 200);
+    assert!(answers.iter().all(|a| *a == answers[0]));
 }
 
 #[test]
