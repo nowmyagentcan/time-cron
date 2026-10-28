@@ -2,6 +2,7 @@
 
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{Ipv4Addr, Shutdown, TcpListener, TcpStream};
+use std::process::{Command, Stdio};
 use std::thread;
 use std::time::Duration;
 
@@ -18,8 +19,9 @@ const CSP: &str = "default-src 'none'; style-src 'unsafe-inline'; script-src 'un
 
 type Response = (u16, &'static str, String);
 
-/// Serves on 127.0.0.1:`port` (0 picks a free port) until the process is stopped.
-pub fn serve(port: u16) -> Result<(), Error> {
+/// Serves on 127.0.0.1:`port` (0 picks a free port) until the process is stopped, and opens
+/// the page in the default browser when `open` is set.
+pub fn serve(port: u16, open: bool) -> Result<(), Error> {
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, port)).map_err(|e| {
         if e.kind() == io::ErrorKind::AddrInUse {
             Error::new(
@@ -32,12 +34,36 @@ pub fn serve(port: u16) -> Result<(), Error> {
         }
     })?;
     let port = listener.local_addr().map_or(port, |a| a.port());
-    println!("Open http://127.0.0.1:{port}  (Ctrl+C to stop)");
+    let url = format!("http://127.0.0.1:{port}");
+    println!("Open {url}  (Ctrl+C to stop)");
+    if open {
+        browse(url);
+    }
     for stream in listener.incoming().flatten() {
         // A client that hangs up or stalls loses only its own connection.
         thread::spawn(move || handle(&stream, port));
     }
     Ok(())
+}
+
+/// Asks the OS to open `url`; when it can't, the printed address is enough.
+fn browse(url: String) {
+    let mut command = if cfg!(windows) {
+        let mut c = Command::new("cmd");
+        c.args(["/C", "start", ""]);
+        c
+    } else if cfg!(target_os = "macos") {
+        Command::new("open")
+    } else {
+        Command::new("xdg-open")
+    };
+    command
+        .arg(url)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    // Some openers wait for the browser to close, so they run beside the server.
+    thread::spawn(move || command.status());
 }
 
 /// One request, one response, then the connection closes.

@@ -19,7 +19,8 @@ const EXAMPLES: &str = "\x1b[1;4mExamples:\x1b[0m
   time-cron next \"0 9 * * 1-5\" --tz Europe/Berlin --count 10
   time-cron next \"0 0 12 ? * MON#2\" --json
   time-cron explain \"cron(0 18 ? * MON-FRI *)\"
-  time-cron convert \"*/15 9-17 * * 1-5\" --to quartz";
+  time-cron convert \"*/15 9-17 * * 1-5\" --to quartz
+  time-cron ui";
 
 #[derive(Parser)]
 #[command(
@@ -51,8 +52,10 @@ enum Command {
     #[command(after_help = EXAMPLES)]
     Convert(ConvertArgs),
     /// Open the local web page
+    #[command(after_help = EXAMPLES)]
     Ui(UiArgs),
     /// Run the MCP server on stdio
+    #[command(after_help = EXAMPLES)]
     Mcp,
 }
 
@@ -61,6 +64,9 @@ struct UiArgs {
     /// Port on 127.0.0.1 [default: a free one]
     #[arg(long, value_name = "N", default_value = "0", hide_default_value = true)]
     port: u16,
+    /// Print the address without opening the browser
+    #[arg(long)]
+    no_open: bool,
 }
 
 #[derive(Args)]
@@ -162,7 +168,7 @@ fn main() -> ExitCode {
     };
     let (common, answer) = match &cli.command {
         Some(Command::Mcp) => return served(mcp::serve()),
-        Some(Command::Ui(u)) => return served(ui::serve(u.port)),
+        Some(Command::Ui(u)) => return served(ui::serve(u.port, !u.no_open)),
         Some(Command::Explain(c)) => (
             c,
             c.expression()

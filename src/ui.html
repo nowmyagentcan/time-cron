@@ -146,22 +146,10 @@ tz.value = here;
 tz.addEventListener("input", () => { tz.dataset.touched = "1"; }, { once: true });
 $("#zones").innerHTML = ["UTC", ...(Intl.supportedValuesOf?.("timeZone") ?? [])].map(z => `<option value="${z}">`).join("");
 
-// Sample answers so the page can be viewed on its own; `time-cron ui` answers for real.
+// Answers and errors (400, 422) alike come back as JSON; a throw means the server is gone.
 async function api(body) {
-  await new Promise(r => setTimeout(r, 300));
-  const e = body.expression.trim();
-  if (!e) return { error: { code: "empty", message: "No cron expression given.", hint: 'Example: time-cron next "0 9 * * 1-5"' } };
-  if (/^0 0 30 2 /.test(e)) return { error: { code: "never_runs", message: "This schedule never runs: day 30 doesn't occur in February.", hint: "Pick a day that exists in every chosen month, or use L in Quartz or AWS." } };
-  if (body.op === "convert") return { expression: e, dialect: "unix", to: body.to, results: ["0 30 2 * * ?"], description: "At 02:30 every day.", warnings: [] };
-  const runs = [{ time: "2027-03-14T03:00:00-04:00", utc: "2027-03-14T07:00:00Z", dst: "moved", scheduled: "2027-03-14T02:30:00" }];
-  for (let d = 15; runs.length < (body.count || 5); d++) runs.push({ time: `2027-03-${d}T02:30:00-04:00`, utc: `2027-03-${d}T06:30:00Z`, dst: null });
-  return {
-    expression: e, dialect: "unix", description: "At 02:30 every day.", timezone: "America/New_York", tzdata: "2026f", from: "2027-03-13T12:00:00-05:00", runs, skipped: [],
-    warnings: [
-      { code: "dst_gap", message: "2027-03-14: clocks jump from 02:00 to 03:00 in America/New_York. Cron runs 02:30 right after the jump." },
-      { code: "dst_gap", message: "2028-03-12: clocks jump from 02:00 to 03:00 in America/New_York. Cron runs 02:30 right after the jump." },
-    ],
-  };
+  const r = await fetch("/api", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  return r.json();
 }
 
 const day = date => ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][new Date(date + "T00:00Z").getUTCDay()];
