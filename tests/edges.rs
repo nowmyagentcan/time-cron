@@ -159,7 +159,6 @@ fn keeps_runs_in_time_order_across_a_fold_that_spans_midnight() {
 }
 
 #[test]
-#[ignore = "known bug: a day of month that never occurs fails the conversion self-check"]
 fn converts_an_or_schedule_whose_day_of_month_never_occurs() {
     for to in ["quartz", "aws"] {
         let (code, v) = json(&["convert", "0 0 30 2 MON", "--to", to]);

@@ -12,7 +12,9 @@ use crate::schedule::{DayRule, DomSpecial, Dow, Schedule};
 /// The schedule written in `to`, with its warnings, given only once each result is shown to
 /// run at the same times as the source.
 pub fn convert(s: &Schedule, to: Dialect) -> Result<(Vec<String>, Vec<Warning>), Error> {
-    let results = rewrite(s, to)?;
+    let mut results = rewrite(s, to)?;
+    // A split part on days that never occur (day 30 in February) adds no runs: leave it out.
+    results.retain(|r| parse(r, Some(to)).is_ok_and(|r| runs::ever(&r, 1).is_ok()));
     let mut warnings = vec![];
     if results.len() == 2 {
         let many = if to == Quartz {
@@ -331,6 +333,8 @@ mod tests {
             ("0 9 */2 * MON", Unix, "0 9 */2 * 1"),
             ("0 9 1-15 * */2", Unix, "0 9 1-15 * */2"),
             ("0 9 */2,4 * MON", Unix, "0 9 */2,4 * 1"),
+            // February 30 never comes, so only the Mondays are left.
+            ("0 0 30 2 MON", Quartz, "0 0 0 ? 2 MON"),
             // Every day of the month OR Monday is every day.
             ("0 9 1-31 * MON", Quartz, "0 0 9 * * ?"),
             // A fixed-time job stays fixed-time; a wildcard one stays a wildcard.
