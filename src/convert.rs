@@ -31,6 +31,18 @@ pub fn convert(s: &Schedule, to: Dialect) -> Result<(Vec<String>, Vec<Warning>),
         ));
     }
     warnings.extend(check(s, to, &results)?);
+    // The self-check runs in UTC, where no clock changes, so say how the rules differ.
+    if to != s.dialect {
+        let result = parse(&results[0], Some(to)).expect("the self-check read it");
+        warnings.push(Warning::new(
+            "dst_rules",
+            format!(
+                "DST rules differ: {}, while {}.",
+                runs::dst_rules(&result),
+                runs::dst_rules(s)
+            ),
+        ));
+    }
     Ok((results, warnings))
 }
 
@@ -248,7 +260,11 @@ mod tests {
 
     fn warnings(text: &str, to: Dialect) -> Vec<String> {
         let (_, warnings) = convert(&parse(text, None).unwrap(), to).unwrap();
-        warnings.into_iter().map(|w| w.message).collect()
+        warnings
+            .into_iter()
+            .filter(|w| w.code != "dst_rules")
+            .map(|w| w.message)
+            .collect()
     }
 
     #[test]
@@ -269,6 +285,36 @@ mod tests {
         // The source's own warnings belong to explain, not to the conversion.
         assert!(warnings("0 0 12 ? * MON#2", Aws).is_empty());
         assert!(warnings("*/7 * * * *", Quartz).is_empty());
+    }
+
+    #[test]
+    fn says_how_dst_rules_differ_across_dialects() {
+        let rules = |text: &str, to| {
+            let (_, warnings) = convert(&parse(text, None).unwrap(), to).unwrap();
+            warnings
+                .into_iter()
+                .filter(|w| w.code == "dst_rules")
+                .map(|w| w.message)
+                .collect::<Vec<_>>()
+        };
+        let fixed = "Unix cron runs a time in a gap right after the jump and a repeated time once, the first time";
+        let quartz = "Quartz skips times in a gap and runs a repeated time once, the second time";
+        assert_eq!(
+            rules("30 2 * * *", Quartz),
+            [format!("DST rules differ: {quartz}, while {fixed}.")]
+        );
+        assert_eq!(
+            rules("0 0/30 2 * * ?", Unix),
+            [format!("DST rules differ: {fixed}, while {quartz}.")]
+        );
+        assert_eq!(
+            rules("*/30 2 * * *", Aws),
+            [
+                "DST rules differ: EventBridge skips times in a gap and runs a repeated time once, the first time, while Unix cron skips times in a gap and runs a repeated time both times."
+            ]
+        );
+        assert!(rules("*/30 2 * * *", Unix).is_empty());
+        assert!(rules("0 30 2 * * ?", Quartz).is_empty());
     }
 
     #[test]

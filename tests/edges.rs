@@ -371,7 +371,6 @@ fn every_time_names_the_same_instant_as_its_utc() {
 }
 
 #[test]
-#[ignore = "known bug: convert doesn't say the target scheduler handles DST differently"]
 fn warns_that_dst_handling_changes_across_dialects() {
     for (expr, to) in [
         ("0 0/30 2 * * ?", "unix"),

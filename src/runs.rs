@@ -258,6 +258,29 @@ fn resolve(
     }
 }
 
+/// What `resolve` does with a DST gap and fold, in words.
+pub fn dst_rules(s: &Schedule) -> String {
+    let (who, rules) = match s.dialect {
+        Dialect::Unix if s.fixed_time => (
+            "Unix cron",
+            "runs a time in a gap right after the jump and a repeated time once, the first time",
+        ),
+        Dialect::Unix => (
+            "Unix cron",
+            "skips times in a gap and runs a repeated time both times",
+        ),
+        Dialect::Quartz => (
+            "Quartz",
+            "skips times in a gap and runs a repeated time once, the second time",
+        ),
+        Dialect::Aws => (
+            "EventBridge",
+            "skips times in a gap and runs a repeated time once, the first time",
+        ),
+    };
+    format!("{who} {rules}")
+}
+
 /// cronie replays a fixed-time job's runs across a clock shift of up to 3 hours.
 fn cronie(s: &Schedule, shift_seconds: i32) -> bool {
     s.dialect == Dialect::Unix && s.fixed_time && shift_seconds.abs() <= 3 * 3600

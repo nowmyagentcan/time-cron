@@ -433,21 +433,21 @@ fn matches_every_conversion_golden() {
     // Each result has passed the binary's own check: its first 100 UTC runs from
     // 1970 equal the source's.
     let cases: &[(&str, &str, &[&str], &[&str])] = &[
-        ("0 9 * * 1-5", "quartz", &["0 0 9 ? * MON-FRI"], &[]),
-        ("0 9 * * 1-5", "aws", &["cron(0 9 ? * MON-FRI *)"], &[]),
-        ("*/15 9-17 * * 1-5", "quartz", &["0 0/15 9-17 ? * MON-FRI"], &[]),
-        ("*/15 9-17 * * 1-5", "aws", &["cron(0/15 9-17 ? * MON-FRI *)"], &[]),
-        ("0 0 * * 0", "quartz", &["0 0 0 ? * SUN"], &[]),
-        ("@daily", "quartz", &["0 0 0 * * ?"], &[]),
+        ("0 9 * * 1-5", "quartz", &["0 0 9 ? * MON-FRI"], &["dst_rules"]),
+        ("0 9 * * 1-5", "aws", &["cron(0 9 ? * MON-FRI *)"], &["dst_rules"]),
+        ("*/15 9-17 * * 1-5", "quartz", &["0 0/15 9-17 ? * MON-FRI"], &["dst_rules"]),
+        ("*/15 9-17 * * 1-5", "aws", &["cron(0/15 9-17 ? * MON-FRI *)"], &["dst_rules"]),
+        ("0 0 * * 0", "quartz", &["0 0 0 ? * SUN"], &["dst_rules"]),
+        ("@daily", "quartz", &["0 0 0 * * ?"], &["dst_rules"]),
         ("@daily", "unix", &["0 0 * * *"], &[]),
-        ("0 0 1,15 * FRI", "quartz", &["0 0 0 1,15 * ?", "0 0 0 ? * FRI"], &["split"]),
-        ("0 0 1,15 * FRI", "aws", &["cron(0 0 1,15 * ? *)", "cron(0 0 ? * FRI *)"], &["split"]),
-        ("0 30 9 ? * 2-6", "unix", &["30 9 * * 1-5"], &[]),
-        ("cron(0 18 ? * MON-FRI *)", "unix", &["0 18 * * 1-5"], &[]),
-        ("cron(0 18 ? * MON-FRI *)", "quartz", &["0 0 18 ? * MON-FRI"], &[]),
-        ("0 0 12 1 1 ? 2030", "aws", &["cron(0 12 1 1 ? 2030)"], &[]),
-        ("0 0 12 ? * MON#2", "aws", &["cron(0 12 ? * 2#2 *)"], &[]),
-        ("0 0 9 LW * ?", "aws", &["cron(0 9 LW * ? *)"], &["aws_undocumented"]),
+        ("0 0 1,15 * FRI", "quartz", &["0 0 0 1,15 * ?", "0 0 0 ? * FRI"], &["split", "dst_rules"]),
+        ("0 0 1,15 * FRI", "aws", &["cron(0 0 1,15 * ? *)", "cron(0 0 ? * FRI *)"], &["split", "dst_rules"]),
+        ("0 30 9 ? * 2-6", "unix", &["30 9 * * 1-5"], &["dst_rules"]),
+        ("cron(0 18 ? * MON-FRI *)", "unix", &["0 18 * * 1-5"], &["dst_rules"]),
+        ("cron(0 18 ? * MON-FRI *)", "quartz", &["0 0 18 ? * MON-FRI"], &["dst_rules"]),
+        ("0 0 12 1 1 ? 2030", "aws", &["cron(0 12 1 1 ? 2030)"], &["dst_rules"]),
+        ("0 0 12 ? * MON#2", "aws", &["cron(0 12 ? * 2#2 *)"], &["dst_rules"]),
+        ("0 0 9 LW * ?", "aws", &["cron(0 9 LW * ? *)"], &["aws_undocumented", "dst_rules"]),
     ];
     for &(expr, to, results, warnings) in cases {
         let (code, v) = json(&["convert", expr, "--to", to]);
@@ -466,6 +466,7 @@ fn prints_only_the_converted_expressions_on_stdout() {
         err,
         "At 00:00, on day 1 and 15 of the month, or on Friday.
 ! Quartz can't match day of month OR day of week in one expression, so this needs two triggers.
+! DST rules differ: Quartz skips times in a gap and runs a repeated time once, the second time, while Unix cron runs a time in a gap right after the jump and a repeated time once, the first time.
 "
     );
     // The source dialect can be named, and the words may come unquoted.
