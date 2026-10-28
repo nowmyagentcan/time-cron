@@ -1,7 +1,32 @@
 //! Plain English for a schedule, on a 24-hour clock.
 
-use crate::schedule::Kind::{self, Hour, Minute, Second};
-use crate::schedule::Schedule;
+use crate::schedule::Kind::{self, DayOfMonth, DayOfWeek, Hour, Minute, Month, Second, Year};
+use crate::schedule::{DayRule, DomSpecial, Dow, Schedule};
+
+const DAYS: [&str; 7] = [
+    "Sunday",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+];
+const MONTHS: [&str; 12] = [
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+];
+const NTH: [&str; 5] = ["first", "second", "third", "fourth", "fifth"];
 
 /// One sentence, e.g. "Every 15 minutes from 09:00 through 17:45, Monday through Friday."
 pub fn describe(s: &Schedule) -> String {
@@ -9,7 +34,12 @@ pub fn describe(s: &Schedule) -> String {
         return "Once, when cron starts.".into();
     }
     let (time, clock) = time(s);
-    let parts = [time];
+    let mut parts = vec![time];
+    match on_date(s) {
+        Some(date) => parts.push(date),
+        None => parts.extend(days(s).into_iter().chain(months(s))),
+    }
+    parts.extend(years(s));
     let mut text = parts.join(", ");
     if clock && parts.len() == 1 {
         text += " every day";
@@ -72,6 +102,122 @@ fn time(s: &Schedule) -> (String, bool) {
         None => format!("At {text}"),
     };
     (text, false)
+}
+
+/// "on January 1": one day of one month, chosen by day of month alone.
+fn on_date(s: &Schedule) -> Option<String> {
+    match (s.day_rule, &s.values(DayOfMonth)[..], &s.values(Month)[..]) {
+        (DayRule::DomOnly, &[d], &[m]) if s.dom.specials.is_empty() => {
+            Some(format!("on {} {d}", MONTHS[m as usize - 1]))
+        }
+        _ => None,
+    }
+}
+
+/// The day part, or None when every day qualifies.
+fn days(s: &Schedule) -> Option<String> {
+    match s.day_rule {
+        DayRule::DomOnly => dom(s),
+        DayRule::DowOnly => dow(s),
+        DayRule::Or => Some(format!("{}, or {}", dom(s)?, dow(s)?)),
+        DayRule::And => {
+            let days = s.values(DayOfWeek).into_iter();
+            let days = list(days.map(|d| DAYS[d as usize].to_string()), "or");
+            Some(format!("{}, only when that day is a {days}", dom(s)?))
+        }
+    }
+}
+
+fn dom(s: &Schedule) -> Option<String> {
+    let days = s.values(DayOfMonth);
+    if is_full(&days, DayOfMonth) {
+        return None;
+    }
+    let plain = match every(s, DayOfMonth, &days) {
+        _ if days.is_empty() => None,
+        Some(n) => {
+            let mut shown: Vec<String> = days.iter().take(3).map(u16::to_string).collect();
+            if days.len() > 3 {
+                shown.push("…".into());
+            }
+            let shown = shown.join(", ");
+            Some(format!(
+                "on every {} day of the month ({shown})",
+                ordinal(n)
+            ))
+        }
+        None => Some(format!("on day {} of the month", numbers(&days))),
+    };
+    let specials = s.dom.specials.iter().map(|&special| match special {
+        DomSpecial::Last { offset: 0, weekday } => {
+            let day = if weekday { "weekday" } else { "day" };
+            format!("on the last {day} of the month")
+        }
+        DomSpecial::Last { offset, weekday } => {
+            let days = if offset == 1 { "day" } else { "days" };
+            let before = format!("{offset} {days} before the last day of the month");
+            if weekday {
+                format!("on the weekday nearest {before}")
+            } else {
+                before
+            }
+        }
+        DomSpecial::Nearest(n) => format!("on the weekday nearest day {n} of the month"),
+    });
+    let parts: Vec<String> = plain.into_iter().chain(specials).collect();
+    (!parts.is_empty()).then(|| parts.join(" and "))
+}
+
+fn dow(s: &Schedule) -> Option<String> {
+    match s.dow {
+        Dow::Days(_) => named(&s.values(DayOfWeek), DayOfWeek, &DAYS, "on"),
+        Dow::Last(d) => Some(format!("on the last {} of the month", DAYS[d as usize])),
+        Dow::Nth(d, n) => Some(format!(
+            "on the {} {} of the month",
+            NTH[n as usize - 1],
+            DAYS[d as usize]
+        )),
+    }
+}
+
+fn months(s: &Schedule) -> Option<String> {
+    named(&s.values(Month), Month, &MONTHS, "in")
+}
+
+/// "Monday through Friday" for a run of 3 or more (`FRI-MON` wraps), else "on Monday and
+/// Friday"; None when the field allows every value.
+fn named(v: &[u16], kind: Kind, names: &[&str], prep: &str) -> Option<String> {
+    let (lo, hi) = kind.range();
+    let (n, len) = (hi - lo + 1, v.len() as u16);
+    if len == 0 || len == n {
+        return None;
+    }
+    // Positions count from lo and wrap past the end.
+    let has = |i: u16| v.contains(&(lo + i % n));
+    if len >= 3
+        && let Some(start) = (0..n).find(|&i| has(i) && !has(i + n - 1))
+        && (0..len).all(|k| has(start + k))
+    {
+        let end = (start + len - 1) % n;
+        return Some(format!(
+            "{} through {}",
+            names[start as usize], names[end as usize]
+        ));
+    }
+    let names = v.iter().map(|&x| names[(x - lo) as usize].to_string());
+    Some(format!("{prep} {}", list(names, "and")))
+}
+
+fn years(s: &Schedule) -> Option<String> {
+    let v = s.values(Year);
+    let (&a, &b) = (v.first()?, v.last()?);
+    Some(match step(&v) {
+        _ if is_full(&v, Year) => return None,
+        _ if a == b => format!("in {a}"),
+        Some(1) => format!("from {a} through {b}"),
+        Some(n) if v.len() >= 3 => format!("every {} year from {a} through {b}", ordinal(n)),
+        _ => format!("in {}", numbers(&v)),
+    })
 }
 
 /// "every minute" or "every 15 minutes" for a time field that runs at even steps.
@@ -231,6 +377,36 @@ mod tests {
                 "30 9-21/2 * * *",
                 "At minute 30 of hours 9, 11, 13, 15, 17, 19 and 21.",
             ),
+        ];
+        for (expr, want) in cases {
+            assert_eq!(text(expr), want, "{expr}");
+        }
+    }
+
+    #[test]
+    #[rustfmt::skip]
+    fn describes_days_months_and_years() {
+        let cases = [
+            ("0 12 * * 5-0", "At 12:00, Friday through Sunday."),
+            ("0 0 12 ? * FRI-MON", "At 12:00, Friday through Monday."),
+            ("0 9 * * 1,2", "At 09:00, on Monday and Tuesday."),
+            ("0 0 1-15 * *", "At 00:00, on day 1 through 15 of the month."),
+            ("0 0 */10 * *", "At 00:00, on every 10th day of the month (1, 11, 21, …)."),
+            ("0 0 */15 * *", "At 00:00, on every 15th day of the month (1, 16, 31)."),
+            ("0 0 12 L,15 * ?", "At 12:00, on day 15 of the month and on the last day of the month."),
+            ("0 0 12 L-1 * ?", "At 12:00, 1 day before the last day of the month."),
+            ("0 0 12 L-2W * ?", "At 12:00, on the weekday nearest 2 days before the last day of the month."),
+            ("0 0 12 ? * 2#5", "At 12:00, on the fifth Monday of the month."),
+            ("0 0 1 1-3 *", "At 00:00, on day 1 of the month, January through March."),
+            ("0 0 0 * 11-2 ?", "At 00:00, November through February."),
+            ("0 0 0 * 1,7 ?", "At 00:00, in January and July."),
+            ("0 0 12 1 1 ? 2027-2028", "At 12:00, on January 1, from 2027 through 2028."),
+            ("0 0 12 1 1 ? 2026/4", "At 12:00, on January 1, every 4th year from 2026 through 2198."),
+            ("0 0 12 1 1 ? 2027,2029", "At 12:00, on January 1, in 2027 and 2029."),
+            ("0 0 12 ? * MON 2030", "At 12:00, on Monday, in 2030."),
+            ("0 9 1-15 * */2", "At 09:00, on day 1 through 15 of the month, only when that day is a Sunday, Tuesday, Thursday or Saturday."),
+            // Cron's OR rule with every day of the month runs every day.
+            ("0 9 1-31 * MON", "At 09:00 every day."),
         ];
         for (expr, want) in cases {
             assert_eq!(text(expr), want, "{expr}");
