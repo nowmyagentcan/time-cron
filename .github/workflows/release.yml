@@ -1,0 +1,83 @@
+# A v* tag builds every target into a draft release with SHA256SUMS and build attestations.
+# Running it by hand (workflow_dispatch) builds the same archives as artifacts and stops there.
+name: release
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - { os: windows-latest, target: windows-x64, triple: x86_64-pc-windows-msvc }
+          - { os: macos-latest, target: macos-arm64, triple: aarch64-apple-darwin }
+          - { os: macos-15-intel, target: macos-x64, triple: x86_64-apple-darwin }
+          - { os: ubuntu-latest, target: linux-x64, triple: x86_64-unknown-linux-musl }
+          - { os: ubuntu-24.04-arm, target: linux-arm64, triple: aarch64-unknown-linux-musl }
+    runs-on: ${{ matrix.os }}
+    env:
+      RUSTFLAGS: ${{ matrix.target == 'windows-x64' && '-C target-feature=+crt-static' || '' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.triple }}
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - run: cargo build --release --locked --target ${{ matrix.triple }}
+      - name: Sign (off until certificates exist; add the secrets, then remove the if)
+        if: false
+        shell: bash
+        run: echo "signtool on Windows, codesign and notarytool on macOS"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.target }}
+          path: target/${{ matrix.triple }}/release/time-cron${{ runner.os == 'Windows' && '.exe' || '' }}
+  package:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          path: bin
+      - name: Archive
+        run: |
+          v=v$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml)
+          [ "$GITHUB_REF_TYPE" != tag ] || [ "$GITHUB_REF_NAME" = "$v" ]
+          mkdir dist
+          for t in $(ls bin); do
+            n=time-cron-$v-$t
+            mkdir "$n" && cp bin/$t/* LICENSE "$n"/ && chmod +x "$n"/time-cron*
+            cp README.md "$n"/ 2>/dev/null || [ "$GITHUB_REF_TYPE" != tag ]
+            if [ "$t" = windows-x64 ]; then (cd "$n" && zip -q ../dist/"$n".zip *)
+            else (cd "$n" && tar -czf ../dist/"$n".tar.gz *); fi
+          done
+          cd dist && sha256sum * > SHA256SUMS
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/*
+  release:
+    if: github.ref_type == 'tag'
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist
+      - uses: actions/attest@v4
+        with:
+          subject-checksums: dist/SHA256SUMS
+      - run: gh release create "$GITHUB_REF_NAME" dist/* --draft --verify-tag --title "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY"
+        env:
+          GH_TOKEN: ${{ github.token }}
