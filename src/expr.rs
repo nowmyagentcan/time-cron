@@ -431,7 +431,7 @@ fn digits(text: &str) -> Option<u32> {
 /// (`forced` when the user named one). Returns the dialect and the field texts; `@reboot`
 /// is the only input that yields no fields.
 fn read(text: &str, forced: Option<Dialect>) -> Result<(Dialect, Vec<&str>), Error> {
-    let text = text.trim();
+    let text = text.trim_matches([' ', '\t', '\r', '\n']);
     if text.is_empty() {
         return Err(Error::new("empty", "No cron expression given.")
             .hint("Example: time-cron next \"0 9 * * 1-5\""));
@@ -483,7 +483,12 @@ fn read(text: &str, forced: Option<Dialect>) -> Result<(Dialect, Vec<&str>), Err
     let inner = (forced.is_none() || forced == Some(Aws))
         .then(|| aws_inner(text))
         .flatten();
-    let fields: Vec<&str> = inner.unwrap_or(text).split_whitespace().collect();
+    // Only spaces and tabs separate fields; any other blank stays part of a field.
+    let fields: Vec<&str> = inner
+        .unwrap_or(text)
+        .split([' ', '\t'])
+        .filter(|f| !f.is_empty())
+        .collect();
     let n = fields.len();
     let question = |i: usize| fields[i] == "?";
     let dialect = match forced {

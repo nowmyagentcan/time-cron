@@ -210,7 +210,6 @@ fn writes_every_time_as_rfc_3339() {
 }
 
 #[test]
-#[ignore = "known bug: any Unicode whitespace separates fields"]
 fn separates_fields_only_with_spaces_and_tabs() {
     for sep in ['\u{a0}', '\u{2028}', '\u{b}', '\u{c}', '\u{3000}'] {
         let (code, v) = json(&["explain", &format!("0{sep}9 * * *")]);
