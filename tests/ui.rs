@@ -1,7 +1,7 @@
 //! The local page: the HTML itself, and `time-cron ui` answering over HTTP on 127.0.0.1.
 
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::{Shutdown, TcpListener, TcpStream};
 use std::process::{Child, Command, Stdio};
 
 use serde_json::{Value, json};
@@ -76,6 +76,7 @@ impl Server {
             .write_all(format!("{head}\r\n\r\n").as_bytes())
             .unwrap();
         stream.write_all(body).unwrap();
+        stream.shutdown(Shutdown::Write).unwrap();
         let mut response = String::new();
         stream.read_to_string(&mut response).unwrap();
         let (headers, body) = response.split_once("\r\n\r\n").unwrap();
@@ -243,6 +244,29 @@ fn refuses_other_hosts_origins_routes_and_large_requests() {
         "a".repeat(17 * 1024)
     );
     assert_eq!(server.send(&head, b"").0, 413);
+}
+
+#[test]
+#[ignore = "known bug: repeated headers, colonless lines and short bodies pass the checks"]
+fn refuses_repeated_headers_and_short_bodies() {
+    let server = Server::start(&["--no-open"]);
+    let body = r#"{"op":"explain","expression":"@daily"}"#;
+    let post = |headers: &str, length: usize| {
+        let head = format!("POST /api HTTP/1.1\r\n{headers}\r\nContent-Length: {length}");
+        server.send(&head, body.as_bytes()).0
+    };
+    let local = "Host: 127.0.0.1:{port}";
+    assert_eq!(post(local, body.len()), 200);
+    for headers in [
+        "Host: evil.example\r\nHost: 127.0.0.1:{port}",
+        "Host: 127.0.0.1:{port}\r\nOrigin: http://evil.example\r\nOrigin: http://127.0.0.1:{port}",
+    ] {
+        assert_ne!(post(headers, body.len()), 200, "{headers}");
+    }
+    assert_eq!(post(local, body.len() + 10), 400);
+    let hidden =
+        "GET / HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nNoColon\r\nOrigin: http://evil.example";
+    assert_ne!(server.send(hidden, b"").0, 200);
 }
 
 #[test]
