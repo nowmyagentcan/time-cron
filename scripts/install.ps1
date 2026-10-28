@@ -18,7 +18,12 @@
     Expand-Archive "$tmp\$archive" "$tmp\x"
     $dir = Join-Path $env:LOCALAPPDATA 'Programs\time-cron'
     New-Item -ItemType Directory -Force $dir | Out-Null
-    Copy-Item "$tmp\x\time-cron.exe" $dir -Force
+    $exe = Join-Path $dir 'time-cron.exe'
+    # A running time-cron (say an MCP client's server) locks its file but not its name, so
+    # move it aside; a copy still running is removed by a later install.
+    if (Test-Path $exe) { Move-Item $exe "$exe.$(Get-Random).old" }
+    Copy-Item "$tmp\x\time-cron.exe" $dir
+    Remove-Item "$dir\*.old" -ErrorAction SilentlyContinue
     $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
     $path = $key.GetValue('Path', '', 'DoNotExpandEnvironmentNames')
     if (($path -split ';') -notcontains $dir) {

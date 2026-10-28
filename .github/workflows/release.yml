@@ -134,6 +134,15 @@ jobs:
           }
           # A new shell finds it through the user PATH alone.
           powershell -NoProfile -Command '$env:Path = [Environment]::GetEnvironmentVariable(''Path'', ''User''); time-cron --version'
+          # An upgrade works while time-cron runs, and a later one clears the moved copy.
+          $p = Start-Process "$dir\time-cron.exe" 'ui --no-open' -PassThru -WindowStyle Hidden
+          Start-Sleep 1
+          if ($p.HasExited) { throw 'time-cron ui stopped' }
+          powershell -NoProfile -File dist/install.ps1
+          if ($LASTEXITCODE) { throw 'upgrade failed while time-cron ran' }
+          Stop-Process $p.Id; $p.WaitForExit()
+          powershell -NoProfile -File dist/install.ps1
+          if ($LASTEXITCODE -or (Get-ChildItem $dir).Count -ne 1) { throw 'moved copy left behind' }
   release:
     if: github.ref_type == 'tag'
     needs: smoke
