@@ -3,7 +3,7 @@
 # Needs curl, gpg, make, cc and cargo (Linux or macOS).
 set -euo pipefail
 v=${1:?usage: vendor-tzdb.sh <tzdata version>}
-jiff_rev=${JIFF_REV:-0.2.38}
+jiff_rev=0.2.38
 out=$(cd "$(dirname "$0")/../vendor/jiff-tzdb" && pwd)
 work=$(mktemp -d); trap 'rm -rf "$work"' EXIT; cd "$work"
 
