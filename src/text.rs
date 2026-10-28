@@ -8,11 +8,14 @@ use crate::report::{Converted, Explained, Upcoming};
 use crate::runs::Dst;
 use crate::schedule::Dialect;
 
-const BOLD: &str = "\x1b[1m";
-const DIM: &str = "\x1b[2m";
+/// What the tool is for, in one sentence: the help's first line and the banner's second.
+pub const SENTENCE: &str = "Explain a cron schedule and see exactly when it runs.";
+
+pub(crate) const BOLD: &str = "\x1b[1m";
+pub(crate) const DIM: &str = "\x1b[2m";
 const RED: &str = "\x1b[31m";
 const YELLOW: &str = "\x1b[33m";
-const RESET: &str = "\x1b[0m";
+pub(crate) const RESET: &str = "\x1b[0m";
 
 pub fn explained(e: &Explained) -> String {
     let mut out = format!(
@@ -44,10 +47,19 @@ pub fn upcoming(u: &Upcoming) -> String {
         Dialect::Quartz => "Quartz",
         Dialect::Aws => "EventBridge",
     };
-    let mut out = format!(
-        "{BOLD}{}{RESET}\n{DIM}{} · tzdata {} · {rules} rules{RESET}\n",
-        u.description, u.timezone, u.tzdata
-    );
+    format!(
+        "{BOLD}{}{RESET}\n{DIM}{} · tzdata {} · {rules} rules{RESET}\n{}{}",
+        u.description,
+        u.timezone,
+        u.tzdata,
+        runs(u),
+        warnings(&u.warnings)
+    )
+}
+
+/// One line per run, then one per skipped wall time, each indented 2.
+pub fn runs(u: &Upcoming) -> String {
+    let mut out = String::new();
     let seconds =
         u.runs.iter().any(|r| r.time.second() != 0) || u.skipped.iter().any(|dt| dt.second() != 0);
     let clock = if seconds { "%H:%M:%S" } else { "%H:%M" };
@@ -71,7 +83,7 @@ pub fn upcoming(u: &Upcoming) -> String {
             at.strftime(clock)
         );
     }
-    out + &warnings(&u.warnings)
+    out
 }
 
 /// The converted expressions, one per line: all that `$(time-cron convert …)` captures.
@@ -93,7 +105,7 @@ pub fn error(e: &Error) -> String {
     out
 }
 
-fn warnings(warnings: &[Warning]) -> String {
+pub fn warnings(warnings: &[Warning]) -> String {
     warnings
         .iter()
         .map(|w| format!("{YELLOW}!{RESET} {}\n", w.message))
@@ -102,7 +114,13 @@ fn warnings(warnings: &[Warning]) -> String {
 
 /// The text with plain ASCII in place of the marks a console without UTF-8 can't show.
 pub fn ascii(text: &str) -> String {
-    text.replace('✗', "x").replace('·', "-").replace('…', "...")
+    text.replace(['╭', '╮', '╰', '╯'], "+")
+        .replace(['─', '·'], "-")
+        .replace('│', "|")
+        .replace('✻', "*")
+        .replace('›', ">")
+        .replace('✗', "x")
+        .replace('…', "...")
 }
 
 /// Whether the console shows Unicode: on Windows only when its output code page is UTF-8.

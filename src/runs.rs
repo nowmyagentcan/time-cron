@@ -225,10 +225,7 @@ fn zone(s: &Schedule, name: Option<&str>, warnings: &mut Vec<Warning>) -> Result
             _ => local(TimeZone::try_system().ok(), warnings),
         });
     };
-    let tz = tz::db().get(name).map_err(|_| {
-        Error::new("unknown_tz", format!("Unknown time zone '{name}'."))
-            .hint("Use an IANA name such as America/New_York, Europe/Berlin or UTC.")
-    })?;
+    let tz = find_zone(name)?;
     let utc = tz.preceding(Timestamp::MAX).next().is_none()
         && tz.to_offset(Timestamp::UNIX_EPOCH) == Offset::UTC;
     if s.dialect == Dialect::Aws && !utc {
@@ -241,6 +238,20 @@ fn zone(s: &Schedule, name: Option<&str>, warnings: &mut Vec<Warning>) -> Result
         ));
     }
     Ok(tz)
+}
+
+/// A zone of the bundled tzdata, by its IANA name in any case.
+pub fn find_zone(name: &str) -> Result<TimeZone, Error> {
+    tz::db().get(name).map_err(|_| {
+        Error::new("unknown_tz", format!("Unknown time zone '{name}'."))
+            .hint("Use an IANA name such as America/New_York, Europe/Berlin or UTC.")
+    })
+}
+
+/// The IANA name of the computer's zone, or UTC when it has none.
+pub fn system_zone() -> String {
+    let tz = local(TimeZone::try_system().ok(), &mut vec![]);
+    tz.iana_name().unwrap_or("UTC").into()
 }
 
 /// The computer's zone, or UTC when it has no IANA name to report.

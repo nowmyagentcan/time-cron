@@ -2,6 +2,7 @@ pub mod convert;
 pub mod describe;
 pub mod error;
 pub mod expr;
+pub mod interactive;
 pub mod lint;
 pub mod report;
 pub mod runs;
