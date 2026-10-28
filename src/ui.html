@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Explain a cron schedule</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256'><rect width='256' height='256' rx='57' fill='%23d97706'/><path transform='translate(48 48) scale(.625)' fill='%23fff' d='M140,80v41.21l34.17,20.5a12,12,0,1,1-12.34,20.58l-40-24A12,12,0,0,1,116,128V80a12,12,0,0,1,24,0Zm84-28a12,12,0,0,0-12,12v7.37c-4.21-4.67-8.58-9.31-13.29-14.08a100,100,0,1,0-2.07,143.44,12,12,0,0,0-16.48-17.46,76,76,0,1,1,1.53-109.06C187.61,80.2,193,86,198.23,92H184a12,12,0,0,0,0,24h40a12,12,0,0,0,12-12V64A12,12,0,0,0,224,52Z'/></svg>">
+<style>
+:root { --bg:#fafaf9; --fg:#1c1b1a; --muted:#6b6966; --line:#e7e5e2; --field:#f2f1ef; --accent:#0f7b4a; --danger:#b42318; --r:8px;
+  --mono: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace; }
+@media (prefers-color-scheme: dark) { :root { --bg:#121110; --fg:#ecebe9; --muted:#9a9894; --line:#2a2826; --field:#1b1a19; --accent:#5fd38d; --danger:#f97066; } }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif; }
+main { max-width: 640px; margin: 0 auto; padding: 28px 16px 20px; display: grid; gap: 16px; }
+h1 { margin: 0; font-size: 19px; font-weight: 600; text-align: center; letter-spacing: -0.01em; }
+p { margin: 0; }
+svg { width: 16px; height: 16px; fill: currentColor; flex: none; }
+.visual { width: auto; height: 64px; justify-self: center; color: var(--muted); }
+form { display: grid; gap: 12px; }
+label { display: grid; gap: 4px; font-size: 13px; color: var(--muted); }
+input, select { width: 100%; min-height: 40px; padding: 8px 10px; font: inherit; font-size: 15px; color: var(--fg); background: var(--field); border: 1px solid var(--line); border-radius: var(--r); }
+#expr { font: 18px/1.4 var(--mono); padding: 10px 12px; }
+.two { display: grid; grid-template-columns: 1fr 1.6fr; gap: 12px; }
+.three { display: grid; grid-template-columns: 7rem 1fr 1fr; gap: 12px; margin-top: 10px; }
+summary { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; color: var(--muted); cursor: pointer; list-style: none; border-radius: var(--r); }
+summary::-webkit-details-marker { display: none; }
+details[open] summary svg { transform: rotate(90deg); }
+button { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 4px 10px; font: inherit; font-size: 14px; color: var(--fg); background: var(--field); border: 1px solid var(--line); border-radius: var(--r); cursor: pointer; }
+button:active { transform: translateY(1px); }
+.go { justify-self: center; min-height: 40px; padding: 8px 32px; font-size: 15px; font-weight: 600; color: var(--bg); background: var(--accent); border-color: var(--accent); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+#out { display: grid; gap: 12px; min-height: 88px; padding: 16px; border: 1px solid var(--line); border-radius: var(--r); align-content: start; }
+.muted { color: var(--muted); }
+.examples { display: flex; flex-wrap: wrap; gap: 8px; }
+.examples button { font-family: var(--mono); }
+.bar { height: 3px; overflow: hidden; border-radius: var(--r); }
+.bar::after { content: ""; display: block; width: 40%; height: 100%; background: var(--accent); animation: slide 1.1s linear infinite; }
+@keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
+@media (prefers-reduced-motion: reduce) { .bar::after { width: 100%; animation: none; } }
+.head { display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: start; }
+.desc { font-size: 17px; font-weight: 600; }
+.acts { display: flex; gap: 8px; }
+.meta { font-size: 13px; color: var(--muted); margin-top: -8px; }
+ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+li, .err { display: flex; gap: 8px; align-items: baseline; }
+li svg, .err svg { position: relative; top: 3px; }
+.scroll { overflow-x: auto; }
+table { border-collapse: collapse; font: 14px/1.5 var(--mono); font-variant-numeric: tabular-nums; }
+th { padding: 0 20px 4px 0; font: 500 12px/1.5 system-ui, sans-serif; color: var(--muted); text-align: left; border-bottom: 1px solid var(--line); }
+td { padding: 3px 20px 0 0; white-space: nowrap; }
+.dim { color: var(--muted); }
+.note { font-family: system-ui, sans-serif; }
+.conv { display: grid; grid-template-columns: auto 1fr auto; gap: 4px 12px; align-items: center; padding-top: 12px; border-top: 1px solid var(--line); }
+.wide { grid-column: 1 / -1; }
+.conv code { font: 15px var(--mono); overflow-wrap: anywhere; }
+.err { color: var(--danger); font-weight: 600; }
+.hint { padding-left: 24px; }
+footer { display: flex; justify-content: center; align-items: center; gap: 16px; font-size: 13px; }
+footer a { display: inline-flex; color: var(--muted); border-radius: 4px; }
+footer a:hover { color: var(--fg); }
+footer svg { width: 18px; height: 18px; }
+@media (max-width: 520px) { .two, .three { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Explain a cron schedule and see exactly when it runs.</h1>
+  <svg class="visual" viewBox="0 0 240 64" role="img" aria-label="A cron expression becomes a list of run dates">
+    <rect x="1" y="15" width="132" height="34" rx="8" fill="none" stroke="currentColor" stroke-width="2"/>
+    <text x="67" y="37" text-anchor="middle" font-family="ui-monospace, Consolas, monospace" font-size="15">0 9 * * 1-5</text>
+    <path transform="translate(146 16) scale(.125)" d="M221.66,133.66l-72,72a8,8,0,0,1-11.32-11.32L196.69,136H40a8,8,0,0,1,0-16H196.69L138.34,61.66a8,8,0,0,1,11.32-11.32l72,72A8,8,0,0,1,221.66,133.66Z"/>
+    <path transform="translate(192 8) scale(.1875)" d="M208,32H184V24a8,8,0,0,0-16,0v8H88V24a8,8,0,0,0-16,0v8H48A16,16,0,0,0,32,48V208a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V48A16,16,0,0,0,208,32ZM72,48v8a8,8,0,0,0,16,0V48h80v8a8,8,0,0,0,16,0V48h24V80H48V48ZM208,208H48V96H208V208Zm-68-76a12,12,0,1,1-12-12A12,12,0,0,1,140,132Zm44,0a12,12,0,1,1-12-12A12,12,0,0,1,184,132ZM96,172a12,12,0,1,1-12-12A12,12,0,0,1,96,172Zm44,0a12,12,0,1,1-12-12A12,12,0,0,1,140,172Zm44,0a12,12,0,1,1-12-12A12,12,0,0,1,184,172Z"/>
+  </svg>
+
+  <form>
+    <label>Cron expression
+      <input id="expr" placeholder="0 9 * * 1-5" autocomplete="off" autocapitalize="off" spellcheck="false" autofocus>
+    </label>
+    <div class="two">
+      <label>Dialect
+        <select id="dialect">
+          <option value="auto">Auto-detect</option>
+          <option value="unix">Unix cron</option>
+          <option value="quartz">Quartz</option>
+          <option value="aws">AWS EventBridge</option>
+        </select>
+      </label>
+      <label>Time zone
+        <input id="tz" list="zones" autocomplete="off" spellcheck="false">
+      </label>
+    </div>
+    <datalist id="zones"></datalist>
+    <details>
+      <summary><svg viewBox="0 0 256 256" aria-hidden="true"><path d="M181.66,133.66l-80,80a8,8,0,0,1-11.32-11.32L164.69,128,90.34,53.66a8,8,0,0,1,11.32-11.32l80,80A8,8,0,0,1,181.66,133.66Z"/></svg>Options</summary>
+      <div class="three">
+        <label>Runs
+          <input id="count" type="number" min="1" max="1000" value="10">
+        </label>
+        <label>Start (blank for now)
+          <input id="from" type="datetime-local">
+        </label>
+        <label>Convert to
+          <select id="to">
+            <option value="">None</option>
+            <option value="unix">Unix cron</option>
+            <option value="quartz">Quartz</option>
+            <option value="aws">AWS EventBridge</option>
+          </select>
+        </label>
+      </div>
+    </details>
+    <button class="go">Explain</button>
+  </form>
+
+  <section id="out" aria-live="polite" aria-label="Result">
+    <p class="muted">Type a schedule above, or try one:</p>
+    <div class="examples">
+      <button type="button" data-ex="0 9 * * 1-5">0 9 * * 1-5</button>
+      <button type="button" data-ex="0 0 12 ? * MON#2">0 0 12 ? * MON#2</button>
+      <button type="button" data-ex="cron(0 18 ? * MON-FRI *)">cron(0 18 ? * MON-FRI *)</button>
+    </div>
+  </section>
+
+  <footer>
+    <a href="https://nowmyagentcan.com">nowmyagentcan.com</a>
+    <a href="https://github.com/nowmyagentcan/time-cron" aria-label="time-cron on GitHub"><svg viewBox="0 0 256 256" aria-hidden="true"><path d="M208.31,75.68A59.78,59.78,0,0,0,202.93,28,8,8,0,0,0,196,24a59.75,59.75,0,0,0-48,24H124A59.75,59.75,0,0,0,76,24a8,8,0,0,0-6.93,4,59.78,59.78,0,0,0-5.38,47.68A58.14,58.14,0,0,0,56,104v8a56.06,56.06,0,0,0,48.44,55.47A39.8,39.8,0,0,0,96,192v8H72a24,24,0,0,1-24-24A40,40,0,0,0,8,136a8,8,0,0,0,0,16,24,24,0,0,1,24,24,40,40,0,0,0,40,40H96v16a8,8,0,0,0,16,0V192a24,24,0,0,1,48,0v40a8,8,0,0,0,16,0V192a39.8,39.8,0,0,0-8.44-24.53A56.06,56.06,0,0,0,216,112v-8A58.14,58.14,0,0,0,208.31,75.68ZM200,112a40,40,0,0,1-40,40H112a40,40,0,0,1-40-40v-8a41.74,41.74,0,0,1,6.9-22.48A8,8,0,0,0,80,73.83a43.81,43.81,0,0,1,.79-33.58,43.88,43.88,0,0,1,32.32,20.06A8,8,0,0,0,119.82,64h32.35a8,8,0,0,0,6.74-3.69,43.87,43.87,0,0,1,32.32-20.06A43.81,43.81,0,0,1,192,73.83a8.09,8.09,0,0,0,1,7.65A41.72,41.72,0,0,1,200,104Z"/></svg></a>
+    <a href="https://x.com/chayp05" aria-label="nowmyagentcan on X"><svg viewBox="0 0 256 256" aria-hidden="true"><path d="M214.75,211.71l-62.6-98.38,61.77-67.95a8,8,0,0,0-11.84-10.76L143.24,99.34,102.75,35.71A8,8,0,0,0,96,32H48a8,8,0,0,0-6.75,12.3l62.6,98.37-61.77,68a8,8,0,1,0,11.84,10.76l58.84-64.72,40.49,63.63A8,8,0,0,0,160,224h48a8,8,0,0,0,6.75-12.29ZM164.39,208,62.57,48h29L193.43,208Z"/></svg></a>
+  </footer>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const form = $("form"), out = $("#out"), expr = $("#expr"), tz = $("#tz");
+const RULES = { unix: "Unix cron rules", quartz: "Quartz rules", aws: "EventBridge rules" };
+const NAMES = { unix: "Unix cron", quartz: "Quartz", aws: "AWS" };
+const icon = d => `<svg viewBox="0 0 256 256" aria-hidden="true"><path d="${d}"/></svg>`;
+const COPY = icon("M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z");
+const SAVE = icon("M224,144v64a8,8,0,0,1-8,8H40a8,8,0,0,1-8-8V144a8,8,0,0,1,16,0v56H208V144a8,8,0,0,1,16,0Zm-101.66,5.66a8,8,0,0,0,11.32,0l40-40a8,8,0,0,0-11.32-11.32L136,124.69V32a8,8,0,0,0-16,0v92.69L93.66,98.34a8,8,0,0,0-11.32,11.32Z");
+const WARN = icon("M236.8,188.09,149.35,36.22h0a24.76,24.76,0,0,0-42.7,0L19.2,188.09a23.51,23.51,0,0,0,0,23.72A24.35,24.35,0,0,0,40.55,224h174.9a24.35,24.35,0,0,0,21.33-12.19A23.51,23.51,0,0,0,236.8,188.09ZM222.93,203.8a8.5,8.5,0,0,1-7.48,4.2H40.55a8.5,8.5,0,0,1-7.48-4.2,7.59,7.59,0,0,1,0-7.72L120.52,44.21a8.75,8.75,0,0,1,15,0l87.45,151.87A7.59,7.59,0,0,1,222.93,203.8ZM120,144V104a8,8,0,0,1,16,0v40a8,8,0,0,1-16,0Zm20,36a12,12,0,1,1-12-12A12,12,0,0,1,140,180Z");
+const FAIL = icon("M165.66,101.66,139.31,128l26.35,26.34a8,8,0,0,1-11.32,11.32L128,139.31l-26.34,26.35a8,8,0,0,1-11.32-11.32L116.69,128,90.34,101.66a8,8,0,0,1,11.32-11.32L128,116.69l26.34-26.35a8,8,0,0,1,11.32,11.32ZM232,128A104,104,0,1,1,128,24,104.11,104.11,0,0,1,232,128Zm-16,0a88,88,0,1,0-88,88A88.1,88.1,0,0,0,216,128Z");
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+
+const here = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+tz.value = here;
+tz.addEventListener("input", () => { tz.dataset.touched = "1"; }, { once: true });
+$("#zones").innerHTML = ["UTC", ...(Intl.supportedValuesOf?.("timeZone") ?? [])].map(z => `<option value="${z}">`).join("");
+
+// Sample answers so the page can be viewed on its own; `time-cron ui` answers for real.
+async function api(body) {
+  await new Promise(r => setTimeout(r, 300));
+  const e = body.expression.trim();
+  if (!e) return { error: { code: "empty", message: "No cron expression given.", hint: 'Example: time-cron next "0 9 * * 1-5"' } };
+  if (/^0 0 30 2 /.test(e)) return { error: { code: "never_runs", message: "This schedule never runs: day 30 doesn't occur in February.", hint: "Pick a day that exists in every chosen month, or use L in Quartz or AWS." } };
+  if (body.op === "convert") return { expression: e, dialect: "unix", to: body.to, results: ["0 30 2 * * ?"], description: "At 02:30 every day.", warnings: [] };
+  const runs = [{ time: "2027-03-14T03:00:00-04:00", utc: "2027-03-14T07:00:00Z", dst: "moved", scheduled: "2027-03-14T02:30:00" }];
+  for (let d = 15; runs.length < (body.count || 5); d++) runs.push({ time: `2027-03-${d}T02:30:00-04:00`, utc: `2027-03-${d}T06:30:00Z`, dst: null });
+  return {
+    expression: e, dialect: "unix", description: "At 02:30 every day.", timezone: "America/New_York", tzdata: "2026f", from: "2027-03-13T12:00:00-05:00", runs, skipped: [],
+    warnings: [
+      { code: "dst_gap", message: "2027-03-14: clocks jump from 02:00 to 03:00 in America/New_York. Cron runs 02:30 right after the jump." },
+      { code: "dst_gap", message: "2028-03-12: clocks jump from 02:00 to 03:00 in America/New_York. Cron runs 02:30 right after the jump." },
+    ],
+  };
+}
+
+const day = date => ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][new Date(date + "T00:00Z").getUTCDay()];
+const clock = (s, secs) => s.slice(11, secs ? 19 : 16);
+const note = (r, secs) => r.dst === "moved" ? `moved from ${clock(r.scheduled, secs)}` : r.dst ? `${r.dst} ${clock(r.time, secs)} of two` : "";
+
+function asText(n, c, secs) {
+  const lines = [n.description, `${n.timezone} · tzdata ${n.tzdata} · ${RULES[n.dialect]}`];
+  for (const r of n.runs) lines.push(`  ${day(r.time.slice(0, 10))} ${r.time.slice(0, 10)} ${clock(r.time, secs)} ${r.time.slice(19)}  ${note(r, secs)}`.trimEnd());
+  for (const s of n.skipped) lines.push(`  skipped ${day(s.scheduled.slice(0, 10))} ${s.scheduled.slice(0, 10)} ${clock(s.scheduled, secs)} (DST gap)`);
+  for (const w of n.warnings.concat(c?.warnings ?? [])) lines.push(`! ${w.message}`);
+  if (c?.results) for (const x of c.results) lines.push(`${NAMES[c.to]}: ${x}`);
+  return lines.join("\n") + "\n";
+}
+
+const failure = e => `<p class="err">${FAIL}<span>${esc(e.message)}</span></p>` + (e.hint ? `<p class="hint">${esc(e.hint)}</p>` : "");
+
+function done(n, c) {
+  const secs = n.runs.some(r => r.time.slice(17, 19) !== "00");
+  const warnings = n.warnings.concat(c?.warnings ?? []);
+  const rows = n.runs.map(r => `<tr><td>${day(r.time.slice(0, 10))} ${r.time.slice(0, 10)} ${clock(r.time, secs)} <span class="dim">${r.time.slice(19)}</span></td>`
+    + `<td class="dim">${r.utc.slice(0, 10)} ${clock(r.utc, secs)}</td><td class="note">${note(r, secs)}</td></tr>`).join("");
+  out.dataset.text = asText(n, c, secs);
+  out.innerHTML = `<div class="head"><p class="desc">${esc(n.description)}</p>`
+    + `<div class="acts"><button type="button" data-copy>${COPY}Copy</button><button type="button" data-save>${SAVE}Save</button></div></div>`
+    + `<p class="meta">${esc(n.timezone)} · tzdata ${esc(n.tzdata)} · ${RULES[n.dialect]}</p>`
+    + (warnings.length ? `<ul>${warnings.map(w => `<li>${WARN}<span>${esc(w.message)}</span></li>`).join("")}</ul>` : "")
+    + `<div class="scroll"><table><thead><tr><th>${esc(n.timezone)}</th><th>UTC</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`
+    + (n.skipped.length ? `<p class="muted">Skipped in the DST gap: ${n.skipped.map(s => `${s.scheduled.slice(0, 10)} ${clock(s.scheduled, secs)}`).join(", ")}</p>` : "")
+    + (c ? `<div class="conv">${c.error ? `<div class="wide">${failure(c.error)}</div>`
+      : c.results.map(x => `<span class="muted">${NAMES[c.to]}</span><code>${esc(x)}</code><button type="button" data-copy="${esc(x)}">${COPY}Copy</button>`).join("")}</div>` : "");
+}
+
+let latest = 0;
+form.addEventListener("submit", async ev => {
+  ev.preventDefault();
+  const run = ++latest;
+  const base = { expression: expr.value, dialect: $("#dialect").value };
+  const next = { op: "next", ...base, count: Number($("#count").value) || 10 };
+  if (tz.dataset.touched && tz.value.trim()) next.timezone = tz.value.trim();
+  if ($("#from").value) next.from = $("#from").value;
+  const to = $("#to").value;
+  const wait = setTimeout(() => {
+    out.setAttribute("aria-busy", "true");
+    out.innerHTML = `<div class="bar" role="progressbar" aria-label="Working"></div><p class="muted">Working out the run times…</p>`;
+  }, 150);
+  let n, c;
+  try {
+    n = await api(next);
+    if (!n.error && to) c = await api({ op: "convert", ...base, to });
+  } catch {
+    n = { error: { message: "Can't reach time-cron.", hint: "Start it again with: time-cron ui" } };
+  }
+  clearTimeout(wait);
+  if (run !== latest) return;
+  out.removeAttribute("aria-busy");
+  if (n.error) out.innerHTML = failure(n.error); else done(n, c);
+});
+
+out.addEventListener("click", async ev => {
+  const b = ev.target.closest("button");
+  if (!b) return;
+  if (b.dataset.ex) { expr.value = b.dataset.ex; form.requestSubmit(); return; }
+  if (b.hasAttribute("data-save")) {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([out.dataset.text], { type: "text/plain" }));
+    a.download = "cron-schedule.txt";
+    a.click();
+    URL.revokeObjectURL(a.href);
+    return;
+  }
+  const label = b.lastChild;
+  try { await navigator.clipboard.writeText(b.dataset.copy || out.dataset.text); label.textContent = "Copied"; }
+  catch { label.textContent = "Can't copy"; }
+  setTimeout(() => { label.textContent = "Copy"; }, 1500);
+});
+</script>
+</body>
+</html>
