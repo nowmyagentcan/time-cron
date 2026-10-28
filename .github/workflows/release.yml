@@ -95,7 +95,7 @@ jobs:
             if grep -qiaE 'vcruntime|api-ms-win-crt' time-cron.exe; then echo 'needs the VC++ runtime'; exit 1; fi
           else
             tar -xzf ../dist/*-${{ matrix.target }}.tar.gz
-            if [ "$RUNNER_OS" = Linux ]; then file time-cron | grep -E 'static(-pie)? linked'; fi
+            if [ "$RUNNER_OS" = Linux ]; then file time-cron | grep -E 'static(-pie|ally) linked'; fi
           fi
           test -s LICENSE && test -s THIRD-PARTY-LICENSES.txt
           ./time-cron --version
