@@ -377,20 +377,6 @@ mod tests {
     use super::*;
     use crate::expr::parse;
 
-    fn utc_runs(text: &str, count: usize) -> Vec<String> {
-        let next = next(
-            &parse(text, None).unwrap(),
-            Some("UTC"),
-            Some("2026-10-29T00:00:00Z"),
-            count,
-        )
-        .unwrap();
-        next.runs
-            .iter()
-            .map(|r| r.time.timestamp().to_string())
-            .collect()
-    }
-
     /// Runs as `time [dst] [scheduled]`, and the skipped wall times.
     fn runs_in(text: &str, tz: &str, from: &str, count: usize) -> (Vec<String>, Vec<String>) {
         let n = next(&parse(text, None).unwrap(), Some(tz), Some(from), count).unwrap();
@@ -416,31 +402,74 @@ mod tests {
 
     #[test]
     #[rustfmt::skip]
-    fn follows_each_schedulers_dst_rules() {
+    fn matches_the_next_run_goldens() {
+        const UTC: &str = "UTC";
         const NY: &str = "America/New_York";
+        const START: &str = "2026-10-29T00:00:00Z";
         const SPRING: &str = "2027-03-13T12:00";
         const AUTUMN: &str = "2026-10-31T23:00";
-        let none: [&str; 0] = [];
-        // cronie runs a fixed-time job lost in the gap right after the jump...
-        let (runs, skipped) = runs_in("30 2 * * *", NY, SPRING, 3);
-        assert_eq!(runs, ["2027-03-14T03:00:00-04:00 Moved 2027-03-14T02:30:00", "2027-03-15T02:30:00-04:00", "2027-03-16T02:30:00-04:00"]);
-        assert_eq!(skipped, none);
-        // ...but skips a wildcard job's gap times.
-        let (runs, skipped) = runs_in("*/15 2 * * *", NY, SPRING, 1);
-        assert_eq!(runs, ["2027-03-15T02:00:00-04:00"]);
-        assert_eq!(skipped, ["2027-03-14T02:00:00", "2027-03-14T02:15:00", "2027-03-14T02:30:00", "2027-03-14T02:45:00"]);
-        // In a fold cronie runs a fixed-time job once and a wildcard job twice.
-        assert_eq!(runs_in("30 1 * * *", NY, AUTUMN, 2).0, ["2026-11-01T01:30:00-04:00 First", "2026-11-02T01:30:00-05:00"]);
-        assert_eq!(
-            runs_in("0 * * * *", NY, AUTUMN, 4).0,
-            ["2026-11-01T00:00:00-04:00", "2026-11-01T01:00:00-04:00 First", "2026-11-01T01:00:00-05:00 Second", "2026-11-01T02:00:00-05:00"]
-        );
-        // Quartz takes the second pass and skips gap times.
-        assert_eq!(runs_in("0 30 1 * * ?", NY, AUTUMN, 2).0, ["2026-11-01T01:30:00-05:00 Second", "2026-11-02T01:30:00-05:00"]);
-        assert_eq!(runs_in("0 30 2 * * ?", NY, SPRING, 1), (vec!["2027-03-15T02:30:00-04:00".into()], vec!["2027-03-14T02:30:00".into()]));
-        // EventBridge takes the first pass and skips gap times.
-        assert_eq!(runs_in("cron(30 1 * * ? *)", NY, AUTUMN, 2).0, ["2026-11-01T01:30:00-04:00 First", "2026-11-02T01:30:00-05:00"]);
-        assert_eq!(runs_in("cron(30 2 * * ? *)", NY, SPRING, 1), (vec!["2027-03-15T02:30:00-04:00".into()], vec!["2027-03-14T02:30:00".into()]));
+        type Case<'a> = (&'a str, &'a str, &'a str, usize, &'a [&'a str], &'a [&'a str]);
+        let cases: &[Case] = &[
+            // Day rules and calendar edges, in UTC.
+            ("0 9 1 * MON", UTC, START, 4, &["2026-11-01T09:00:00+00:00", "2026-11-02T09:00:00+00:00", "2026-11-09T09:00:00+00:00", "2026-11-16T09:00:00+00:00"], &[]),
+            ("0 9 */2 * MON", UTC, START, 4, &["2026-11-09T09:00:00+00:00", "2026-11-23T09:00:00+00:00", "2026-12-07T09:00:00+00:00", "2026-12-21T09:00:00+00:00"], &[]),
+            ("0 0 1,15 * FRI", UTC, START, 4, &["2026-10-30T00:00:00+00:00", "2026-11-01T00:00:00+00:00", "2026-11-06T00:00:00+00:00", "2026-11-13T00:00:00+00:00"], &[]),
+            ("0 0 * * 7", UTC, START, 1, &["2026-11-01T00:00:00+00:00"], &[]),
+            ("0 0 29 2 *", UTC, START, 1, &["2028-02-29T00:00:00+00:00"], &[]),
+            ("@daily", UTC, START, 1, &["2026-10-30T00:00:00+00:00"], &[]),
+            ("*/20 * * * * ?", UTC, START, 3, &["2026-10-29T00:00:20+00:00", "2026-10-29T00:00:40+00:00", "2026-10-29T00:01:00+00:00"], &[]),
+            ("0 15 10 ? * 6L", UTC, START, 3, &["2026-10-30T10:15:00+00:00", "2026-11-27T10:15:00+00:00", "2026-12-25T10:15:00+00:00"], &[]),
+            ("0 0 12 ? * MON#2", UTC, START, 3, &["2026-11-09T12:00:00+00:00", "2026-12-14T12:00:00+00:00", "2027-01-11T12:00:00+00:00"], &[]),
+            ("0 0 9 15W * ?", UTC, START, 3, &["2026-11-16T09:00:00+00:00", "2026-12-15T09:00:00+00:00", "2027-01-15T09:00:00+00:00"], &[]),
+            ("0 0 9 LW * ?", UTC, START, 3, &["2026-10-30T09:00:00+00:00", "2026-11-30T09:00:00+00:00", "2026-12-31T09:00:00+00:00"], &[]),
+            ("0 0 12 L-3 * ?", UTC, START, 3, &["2026-11-27T12:00:00+00:00", "2026-12-28T12:00:00+00:00", "2027-01-28T12:00:00+00:00"], &[]),
+            ("0 0 12 ? * L", UTC, START, 2, &["2026-10-31T12:00:00+00:00", "2026-11-07T12:00:00+00:00"], &[]),
+            ("0 0 12 ? * 1-5", UTC, START, 3, &["2026-10-29T12:00:00+00:00", "2026-11-01T12:00:00+00:00", "2026-11-02T12:00:00+00:00"], &[]),
+            // Spring gap: cronie replays fixed-time jobs right after the jump and skips the rest.
+            ("30 2 * * *", NY, SPRING, 3, &["2027-03-14T03:00:00-04:00 Moved 2027-03-14T02:30:00", "2027-03-15T02:30:00-04:00", "2027-03-16T02:30:00-04:00"], &[]),
+            ("0,30 2 * * *", NY, SPRING, 3, &["2027-03-14T03:00:00-04:00 Moved 2027-03-14T02:00:00", "2027-03-14T03:00:00-04:00 Moved 2027-03-14T02:30:00", "2027-03-15T02:00:00-04:00"], &[]),
+            ("*/15 2 * * *", NY, SPRING, 1, &["2027-03-15T02:00:00-04:00"], &["2027-03-14T02:00:00", "2027-03-14T02:15:00", "2027-03-14T02:30:00", "2027-03-14T02:45:00"]),
+            ("0 30 2 * * ?", NY, SPRING, 1, &["2027-03-15T02:30:00-04:00"], &["2027-03-14T02:30:00"]),
+            ("cron(30 2 * * ? *)", NY, SPRING, 1, &["2027-03-15T02:30:00-04:00"], &["2027-03-14T02:30:00"]),
+            // Autumn fold: cronie runs fixed-time jobs once and the rest twice; Quartz takes
+            // the second pass, EventBridge the first.
+            ("30 1 * * *", NY, AUTUMN, 2, &["2026-11-01T01:30:00-04:00 First", "2026-11-02T01:30:00-05:00"], &[]),
+            ("*/30 1 * * *", NY, AUTUMN, 5, &["2026-11-01T01:00:00-04:00 First", "2026-11-01T01:30:00-04:00 First", "2026-11-01T01:00:00-05:00 Second", "2026-11-01T01:30:00-05:00 Second", "2026-11-02T01:00:00-05:00"], &[]),
+            ("0 * * * *", NY, AUTUMN, 4, &["2026-11-01T00:00:00-04:00", "2026-11-01T01:00:00-04:00 First", "2026-11-01T01:00:00-05:00 Second", "2026-11-01T02:00:00-05:00"], &[]),
+            ("0 30 1 * * ?", NY, AUTUMN, 2, &["2026-11-01T01:30:00-05:00 Second", "2026-11-02T01:30:00-05:00"], &[]),
+            ("cron(30 1 * * ? *)", NY, AUTUMN, 2, &["2026-11-01T01:30:00-04:00 First", "2026-11-02T01:30:00-05:00"], &[]),
+            // tzdata 2026f keeps Cuba on -04.
+            ("0 0 * * *", "America/Havana", "2026-10-31T12:00", 2, &["2026-11-01T00:00:00-04:00", "2026-11-02T00:00:00-04:00"], &[]),
+            // Half-hour, two-hour and midnight shifts.
+            ("15 2 * * *", "Australia/Lord_Howe", "2026-10-03T12:00", 1, &["2026-10-04T02:30:00+11:00 Moved 2026-10-04T02:15:00"], &[]),
+            ("*/15 1 * * *", "Australia/Lord_Howe", "2027-04-04", 5, &["2027-04-04T01:00:00+11:00", "2027-04-04T01:15:00+11:00", "2027-04-04T01:30:00+11:00 First", "2027-04-04T01:45:00+11:00 First", "2027-04-04T01:30:00+10:30 Second"], &[]),
+            ("30 2 * * *", "Antarctica/Troll", "2027-03-27T12:00", 1, &["2027-03-28T03:00:00+02:00 Moved 2027-03-28T02:30:00"], &[]),
+            ("30 1 * * *", "Antarctica/Troll", "2026-10-24T12:00", 1, &["2026-10-25T01:30:00+02:00 First"], &[]),
+            ("30 0 * * *", "America/Santiago", "2026-09-05T12:00", 1, &["2026-09-06T01:00:00-03:00 Moved 2026-09-06T00:30:00"], &[]),
+            ("*/30 23 * * *", "America/Santiago", "2027-04-03", 5, &["2027-04-03T23:00:00-03:00 First", "2027-04-03T23:30:00-03:00 First", "2027-04-03T23:00:00-04:00 Second", "2027-04-03T23:30:00-04:00 Second", "2027-04-04T23:00:00-04:00"], &[]),
+        ];
+        for &(text, tz, from, count, runs, skipped) in cases {
+            assert_eq!(runs_in(text, tz, from, count), (runs.iter().map(|r| r.to_string()).collect(), skipped.iter().map(|s| s.to_string()).collect()), "{text} in {tz}");
+        }
+    }
+
+    #[test]
+    fn scans_to_2199_quickly() {
+        let started = std::time::Instant::now();
+        let never = parse("0 0 0 31 2 ? *", None).unwrap();
+        assert!(next(&never, Some("Europe/Berlin"), Some("2026-10-29"), 5).is_err());
+        let sparse = parse("0 0 */31 2 MON", None).unwrap();
+        let n = next(&sparse, Some("Europe/Berlin"), Some("2026-10-29"), 1000).unwrap();
+        assert_eq!(n.runs[0].time.date(), jiff::civil::date(2027, 2, 1));
+        assert_eq!(n.warnings.last().unwrap().code, "few_runs");
+        // Spec target: 100 ms each in a release build, so both together fit in 100 ms here.
+        if !cfg!(debug_assertions) {
+            assert!(
+                started.elapsed().as_millis() <= 100,
+                "{:?}",
+                started.elapsed()
+            );
+        }
     }
 
     fn warnings(text: &str, tz: &str, from: &str) -> Vec<String> {
@@ -492,29 +521,6 @@ mod tests {
     ) -> (&'static str, String, Option<String>) {
         let e = next(&parse(text, None).unwrap(), tz, from, 5).unwrap_err();
         (e.code, e.message, e.hint)
-    }
-
-    #[test]
-    fn lists_runs_strictly_after_the_start() {
-        assert_eq!(
-            utc_runs("0 9 1 * MON", 4),
-            [
-                "2026-11-01T09:00:00Z",
-                "2026-11-02T09:00:00Z",
-                "2026-11-09T09:00:00Z",
-                "2026-11-16T09:00:00Z"
-            ]
-        );
-        assert_eq!(utc_runs("0 0 29 2 *", 1), ["2028-02-29T00:00:00Z"]);
-        assert_eq!(utc_runs("@daily", 1), ["2026-10-30T00:00:00Z"]);
-        assert_eq!(
-            utc_runs("*/20 * * * * ?", 3),
-            [
-                "2026-10-29T00:00:20Z",
-                "2026-10-29T00:00:40Z",
-                "2026-10-29T00:01:00Z"
-            ]
-        );
     }
 
     #[test]
