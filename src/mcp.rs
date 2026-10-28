@@ -10,7 +10,7 @@ use schemars::JsonSchema;
 use serde_json::Value;
 
 use crate::error::Error;
-use crate::report::{self, ConvertArgs, Converted, Explained, Failure, NextArgs, Source, Upcoming};
+use crate::report::{self, ConvertArgs, Converted, Explained, NextArgs, Source, Upcoming};
 
 #[derive(Clone)]
 struct Server;
@@ -64,9 +64,7 @@ fn call(op: &str, mut args: JsonObject) -> CallToolResult {
     args.insert("op".into(), op.into());
     match report::answer(Value::Object(args)) {
         Ok(answer) => CallToolResult::structured(answer),
-        Err(error) => CallToolResult::error(vec![ContentBlock::text(
-            serde_json::to_string(&Failure { error: &error }).expect("errors are plain data"),
-        )]),
+        Err(error) => CallToolResult::error(vec![ContentBlock::text(report::failure(&error))]),
     }
 }
 

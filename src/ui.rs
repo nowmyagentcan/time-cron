@@ -9,7 +9,7 @@ use std::time::Duration;
 use serde_json::Value;
 
 use crate::error::Error;
-use crate::report::{self, Failure};
+use crate::report::{self, failure};
 
 const PAGE: &str = include_str!("ui.html");
 /// The most a request may send in headers, and again in its body.
@@ -165,10 +165,6 @@ fn respond(reader: &mut BufReader<io::Take<&TcpStream>>, port: u16) -> io::Resul
 }
 
 const JSON: &str = "application/json";
-
-fn failure(error: &Error) -> String {
-    serde_json::to_string(&Failure { error }).expect("errors are plain data")
-}
 
 fn error(status: u16, code: &'static str, message: &str) -> Response {
     (status, JSON, failure(&Error::new(code, message)))

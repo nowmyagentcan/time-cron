@@ -162,7 +162,7 @@ fn main() -> ExitCode {
             let message = first.split_whitespace().collect::<Vec<_>>().join(" ");
             let mut error = Error::new("usage", message.trim_start_matches("error: "));
             error.hint = text.lines().rfind(|l| !l.is_empty()).map(String::from);
-            return emit(&json(&report::Failure { error: &error }), "", 2);
+            return emit(&(report::failure(&error) + "\n"), "", 2);
         }
         Err(e) => e.exit(),
     };
@@ -172,7 +172,7 @@ fn main() -> ExitCode {
         Some(Command::Explain(c)) => (
             c,
             c.expression()
-                .and_then(|x| report::explain(&x, dialect(c)))
+                .and_then(|x| report::explain(&x, c.dialect.dialect()))
                 .map(|e| show(c, &e, text::explained)),
         ),
         Some(Command::Next(n)) => (&n.common, next(n)),
@@ -189,8 +189,11 @@ fn main() -> ExitCode {
                 eprintln!("debug: {error:?}");
             }
             if common.json {
-                let out = json(&report::Failure { error: &error });
-                (out, String::new(), error.exit_code())
+                (
+                    report::failure(&error) + "\n",
+                    String::new(),
+                    error.exit_code(),
+                )
             } else {
                 fail(&error);
                 (String::new(), String::new(), error.exit_code())
@@ -230,7 +233,7 @@ fn next(n: &NextArgs) -> Result<(String, String), Error> {
     let expression = n.common.expression()?;
     report::next(
         &expression,
-        dialect(&n.common),
+        n.common.dialect.dialect(),
         n.tz.as_deref(),
         n.from.as_deref(),
         n.count,
@@ -241,7 +244,7 @@ fn next(n: &NextArgs) -> Result<(String, String), Error> {
 /// The results on stdout; the description and warnings on stderr, unless `--json`.
 fn convert(c: &ConvertArgs) -> Result<(String, String), Error> {
     let expression = c.common.expression()?;
-    let answer = report::convert(&expression, dialect(&c.common), c.to)?;
+    let answer = report::convert(&expression, c.common.dialect.dialect(), c.to)?;
     Ok(if c.common.json {
         (json(&answer), String::new())
     } else {
@@ -279,13 +282,9 @@ fn fail(e: &Error) {
     anstream::eprint!("{}", people(text::error(e)));
 }
 
-fn dialect(c: &Common) -> Option<Dialect> {
-    c.dialect.dialect()
-}
-
 /// The parsed field sets, for `--debug`.
 fn debug(c: &Common) {
-    let Ok(s) = expr::parse(&c.expr.join(" "), dialect(c)) else {
+    let Ok(s) = expr::parse(&c.expr.join(" "), c.dialect.dialect()) else {
         return;
     };
     for f in &s.fields {

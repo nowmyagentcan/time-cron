@@ -59,8 +59,13 @@ pub struct Converted {
 
 /// `{"error": {"code", "message", "hint"}}`, the JSON for every failure.
 #[derive(Serialize)]
-pub struct Failure<'a> {
-    pub error: &'a Error,
+struct Failure<'a> {
+    error: &'a Error,
+}
+
+/// The `Failure` JSON, for faces that send it as text.
+pub fn failure(error: &Error) -> String {
+    serde_json::to_string(&Failure { error }).expect("errors are plain data")
 }
 
 /// A run as JSON: `time` with the zone's offset, `utc`, and the DST note.
