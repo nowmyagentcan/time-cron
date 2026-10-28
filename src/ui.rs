@@ -107,7 +107,7 @@ fn respond(reader: &mut BufReader<io::Take<&TcpStream>>, port: u16) -> io::Resul
         words.next().unwrap_or(""),
         words.next().unwrap_or("")
     );
-    let (mut host, mut origin, mut length) = (None, None, Some(0));
+    let (mut host, mut origin, mut length) = (None, None, None);
     loop {
         line.clear();
         if reader.read_line(&mut line)? == 0 {
@@ -120,15 +120,21 @@ fn respond(reader: &mut BufReader<io::Take<&TcpStream>>, port: u16) -> io::Resul
                 _ => error(400, "bad_request", "The request ended early."),
             });
         }
-        let Some((name, value)) = line.split_once(':') else {
+        if line.trim_end_matches(['\r', '\n']).is_empty() {
             break;
+        }
+        let Some((name, value)) = line.split_once(':') else {
+            return Ok(error(400, "bad_request", "Can't read a request header."));
         };
-        let value = value.trim().to_owned();
-        match name.to_ascii_lowercase().as_str() {
-            "host" => host = Some(value),
-            "origin" => origin = Some(value),
-            "content-length" => length = value.parse::<u64>().ok(),
-            _ => {}
+        let field = match name.to_ascii_lowercase().as_str() {
+            "host" => &mut host,
+            "origin" => &mut origin,
+            "content-length" => &mut length,
+            _ => continue,
+        };
+        // A second value could disagree with the first one checked (RFC 9112 §3.2, §6.3).
+        if field.replace(value.trim().to_owned()).is_some() {
+            return Ok(error(400, "bad_request", "A request header is repeated."));
         }
     }
     let local = |scheme: &str, value: &str| {
@@ -146,7 +152,7 @@ fn respond(reader: &mut BufReader<io::Take<&TcpStream>>, port: u16) -> io::Resul
     match route.as_str() {
         "GET /" => Ok((200, "text/html; charset=utf-8", PAGE.into())),
         "POST /api" => {
-            let Some(length) = length else {
+            let Some(length) = length.map_or(Some(0), |l| l.parse::<u64>().ok()) else {
                 return Ok(error(400, "bad_request", "Can't read the request length."));
             };
             if length > LIMIT {
@@ -156,6 +162,9 @@ fn respond(reader: &mut BufReader<io::Take<&TcpStream>>, port: u16) -> io::Resul
             reader.get_mut().set_limit(length.saturating_sub(buffered));
             let mut body = Vec::new();
             reader.take(length).read_to_end(&mut body)?;
+            if (body.len() as u64) < length {
+                return Ok(error(400, "bad_request", "The request ended early."));
+            }
             let answer = serde_json::from_slice::<Value>(&body)
                 .map_err(|e| Error::new("bad_request", format!("Can't read the request: {e}.")))
                 .and_then(report::answer);

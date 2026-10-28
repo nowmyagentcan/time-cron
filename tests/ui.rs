@@ -247,7 +247,6 @@ fn refuses_other_hosts_origins_routes_and_large_requests() {
 }
 
 #[test]
-#[ignore = "known bug: repeated headers, colonless lines and short bodies pass the checks"]
 fn refuses_repeated_headers_and_short_bodies() {
     let server = Server::start(&["--no-open"]);
     let body = r#"{"op":"explain","expression":"@daily"}"#;
