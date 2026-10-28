@@ -569,9 +569,25 @@ fn turns_away_bad_usage_with_exit_2() {
         assert_eq!((code, out.as_str()), (2, ""), "{args:?}");
         assert!(err.starts_with("error: "), "{args:?}: {err}");
         assert!(err.contains("--help"), "{args:?}: {err}");
+        // With --json the same complaint comes as the error object on stdout.
+        let (code, v) = json(args);
+        assert_eq!(
+            (code, &v["error"]["code"]),
+            (2, &json!("usage")),
+            "{args:?}"
+        );
+        assert_eq!(v["error"]["hint"], "For more information, try '--help'.");
     }
     let (_, _, err) = run(&["next", "0 9 * * *", "--count", "0"]);
     assert!(err.contains("must be between 1 and 1000"), "{err}");
+    let (_, v) = json(&["next", "0 9 * * *", "--count", "0"]);
+    let message = "invalid value '0' for '--count <N>': must be between 1 and 1000";
+    assert_eq!(v["error"]["message"], message);
+    let (_, v) = json(&["convert", "0 9 * * *"]);
+    let message = "the following required arguments were not provided: --to <D>";
+    assert_eq!(v["error"]["message"], message);
+    // Help and version stay text.
+    assert!(run(&["--help", "--json"]).1.starts_with("Explain a cron"));
     // No expression at all, and no terminal to ask on.
     let want = "x No expression given.\n  Try: time-cron next \"0 9 * * 1-5\"\n";
     assert_eq!(run(&[]), (2, "".into(), want.into()));

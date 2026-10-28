@@ -144,7 +144,19 @@ fn main() -> ExitCode {
         fail(&e);
         return ExitCode::from(2);
     }
-    let cli = Cli::parse();
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        // Agents asking for JSON get clap's complaint as the JSON error object.
+        Err(e) if e.use_stderr() && std::env::args_os().any(|a| a == "--json") => {
+            let text = e.render().to_string();
+            let first = text.split("\n\n").next().unwrap_or_default();
+            let message = first.split_whitespace().collect::<Vec<_>>().join(" ");
+            let mut error = Error::new("usage", message.trim_start_matches("error: "));
+            error.hint = text.lines().rfind(|l| !l.is_empty()).map(String::from);
+            return emit(&json(&report::Failure { error: &error }), "", 2);
+        }
+        Err(e) => e.exit(),
+    };
     let (common, answer) = match &cli.command {
         Some(Command::Explain(c)) => (
             c,
@@ -174,6 +186,11 @@ fn main() -> ExitCode {
             }
         }
     };
+    emit(&out, &notes, code)
+}
+
+/// Writes the answer to stdout and its notes to stderr; a closed stdout ends quietly.
+fn emit(out: &str, notes: &str, code: u8) -> ExitCode {
     match anstream::stdout().lock().write_all(out.as_bytes()) {
         Ok(()) => {
             anstream::eprint!("{notes}");
