@@ -169,7 +169,7 @@ function asText(n, c, secs) {
 const failure = e => `<p class="err">${FAIL}<span>${esc(e.message)}</span></p>` + (e.hint ? `<p class="hint">${esc(e.hint)}</p>` : "");
 
 function done(n, c) {
-  const secs = n.runs.some(r => r.time.slice(17, 19) !== "00");
+  const secs = n.runs.some(r => r.time.slice(17, 19) !== "00") || n.skipped.some(s => s.scheduled.slice(17, 19) !== "00");
   const warnings = n.warnings.concat(c?.warnings ?? []);
   const rows = n.runs.map(r => `<tr><td>${when(r.time, secs)} <span class="dim">${r.time.slice(19)}</span></td>`
     + `<td class="dim">${r.utc.slice(0, 10)} ${clock(r.utc, secs)}</td><td class="note">${note(r, secs)}</td></tr>`).join("");
