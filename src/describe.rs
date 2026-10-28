@@ -32,17 +32,17 @@ pub fn describe(s: &Schedule) -> String {
 }
 
 /// One field as explained.
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
 pub struct FieldInfo {
-    /// The JSON name: "day_of_month".
+    /// second, minute, hour, day_of_month, month, day_of_week or year.
     pub name: &'static str,
     pub text: String,
-    /// None for `*` and `?`, and when the field holds L, W or #.
+    /// null for `*` and `?`, and when the field holds L, W or #.
     pub values: Option<Values>,
     pub meaning: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
 #[serde(untagged)]
 pub enum Values {
     Numbers(Vec<u16>),

@@ -27,7 +27,7 @@ pub struct Run {
     pub scheduled: Option<DateTime>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Dst {
     Moved,

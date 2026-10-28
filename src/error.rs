@@ -30,7 +30,7 @@ impl Error {
 }
 
 /// Something worth knowing that doesn't stop the answer.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
 pub struct Warning {
     pub code: &'static str,
     pub message: String,

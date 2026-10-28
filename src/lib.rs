@@ -4,6 +4,7 @@ pub mod error;
 pub mod expr;
 pub mod interactive;
 pub mod lint;
+pub mod mcp;
 pub mod report;
 pub mod runs;
 pub mod schedule;

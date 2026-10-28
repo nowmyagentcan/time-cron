@@ -3,12 +3,13 @@ use std::path::Path;
 use std::process::ExitCode;
 use std::sync::LazyLock;
 
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand};
 use serde::Serialize;
 use time_cron::error::Error;
+use time_cron::report::DialectArg;
 use time_cron::runs::system_zone;
 use time_cron::schedule::Dialect;
-use time_cron::{expr, interactive, report, text};
+use time_cron::{expr, interactive, mcp, report, text};
 
 static VERSION: LazyLock<String> =
     LazyLock::new(|| format!("{} (tzdata {})", env!("CARGO_PKG_VERSION"), report::TZDATA));
@@ -49,6 +50,8 @@ enum Command {
     /// Rewrite the expression for unix, quartz or aws
     #[command(after_help = EXAMPLES)]
     Convert(ConvertArgs),
+    /// Run the MCP server on stdio
+    Mcp,
 }
 
 #[derive(Args)]
@@ -108,14 +111,6 @@ struct NextArgs {
     count: usize,
 }
 
-#[derive(Clone, Copy, ValueEnum)]
-enum DialectArg {
-    Auto,
-    Unix,
-    Quartz,
-    Aws,
-}
-
 fn count(s: &str) -> Result<usize, &'static str> {
     s.parse()
         .ok()
@@ -131,13 +126,12 @@ fn main() -> ExitCode {
     if std::env::args_os().len() == 1 {
         if io::stdin().is_terminal() && io::stdout().is_terminal() {
             let (stdin, mut stdout) = (io::stdin().lock(), anstream::stdout());
-            return match interactive::run(stdin, &mut stdout, system_zone(), text::unicode()) {
-                Ok(()) => ExitCode::SUCCESS,
-                Err(e) => {
-                    fail(&e);
-                    ExitCode::from(3)
-                }
-            };
+            return served(interactive::run(
+                stdin,
+                &mut stdout,
+                system_zone(),
+                text::unicode(),
+            ));
         }
         let e =
             Error::new("usage", "No expression given.").hint("Try: time-cron next \"0 9 * * 1-5\"");
@@ -158,6 +152,7 @@ fn main() -> ExitCode {
         Err(e) => e.exit(),
     };
     let (common, answer) = match &cli.command {
+        Some(Command::Mcp) => return served(mcp::serve()),
         Some(Command::Explain(c)) => (
             c,
             c.expression()
@@ -187,6 +182,17 @@ fn main() -> ExitCode {
         }
     };
     emit(&out, &notes, code)
+}
+
+/// The exit of a face that runs until its input ends.
+fn served(result: Result<(), Error>) -> ExitCode {
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            fail(&e);
+            ExitCode::from(e.exit_code())
+        }
+    }
 }
 
 /// Writes the answer to stdout and its notes to stderr; a closed stdout ends quietly.
@@ -258,12 +264,7 @@ fn fail(e: &Error) {
 }
 
 fn dialect(c: &Common) -> Option<Dialect> {
-    match c.dialect {
-        DialectArg::Auto => None,
-        DialectArg::Unix => Some(Dialect::Unix),
-        DialectArg::Quartz => Some(Dialect::Quartz),
-        DialectArg::Aws => Some(Dialect::Aws),
-    }
+    c.dialect.dialect()
 }
 
 /// The parsed field sets, for `--debug`.

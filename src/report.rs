@@ -2,7 +2,9 @@
 
 use jiff::Zoned;
 use jiff::civil::DateTime;
-use serde::{Serialize, Serializer};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize, Serializer};
+use serde_json::Value;
 
 use crate::convert;
 use crate::describe::{FieldInfo, describe, fields};
@@ -18,7 +20,7 @@ pub const TZDATA: &str = match jiff_tzdb::VERSION {
     None => "unknown",
 };
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct Explained {
     pub expression: String,
     pub dialect: Dialect,
@@ -27,7 +29,7 @@ pub struct Explained {
     pub warnings: Vec<Warning>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct Upcoming {
     pub expression: String,
     pub dialect: Dialect,
@@ -35,14 +37,17 @@ pub struct Upcoming {
     pub timezone: String,
     pub tzdata: &'static str,
     #[serde(serialize_with = "rfc3339")]
+    #[schemars(with = "String")]
     pub from: Zoned,
+    #[schemars(with = "Vec<RunJson>")]
     pub runs: Vec<Run>,
     #[serde(serialize_with = "gap_skips")]
+    #[schemars(with = "Vec<Skip>")]
     pub skipped: Vec<DateTime>,
     pub warnings: Vec<Warning>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct Converted {
     pub expression: String,
     pub dialect: Dialect,
@@ -58,17 +63,20 @@ pub struct Failure<'a> {
     pub error: &'a Error,
 }
 
+/// A run as JSON: `time` with the zone's offset, `utc`, and the DST note.
+#[derive(Serialize, JsonSchema)]
+struct RunJson {
+    time: String,
+    utc: String,
+    dst: Option<Dst>,
+    /// The wall time a run moved out of a DST gap was meant for.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    scheduled: Option<String>,
+}
+
 impl Serialize for Run {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        #[derive(Serialize)]
-        struct Json {
-            time: String,
-            utc: String,
-            dst: Option<Dst>,
-            #[serde(skip_serializing_if = "Option::is_none")]
-            scheduled: Option<String>,
-        }
-        Json {
+        RunJson {
             time: self.time.strftime(RFC3339).to_string(),
             utc: self.time.timestamp().to_string(),
             dst: self.dst,
@@ -78,6 +86,13 @@ impl Serialize for Run {
     }
 }
 
+/// A wall time the scheduler skips; `reason` is always "dst_gap".
+#[derive(Serialize, JsonSchema)]
+struct Skip {
+    scheduled: String,
+    reason: &'static str,
+}
+
 const RFC3339: &str = "%Y-%m-%dT%H:%M:%S%:z";
 
 fn rfc3339<S: Serializer>(z: &Zoned, s: S) -> Result<S::Ok, S::Error> {
@@ -85,10 +100,108 @@ fn rfc3339<S: Serializer>(z: &Zoned, s: S) -> Result<S::Ok, S::Error> {
 }
 
 fn gap_skips<S: Serializer>(skipped: &[DateTime], s: S) -> Result<S::Ok, S::Error> {
-    s.collect_seq(
-        skipped
-            .iter()
-            .map(|at| serde_json::json!({"scheduled": at.to_string(), "reason": "dst_gap"})),
+    s.collect_seq(skipped.iter().map(|at| Skip {
+        scheduled: at.to_string(),
+        reason: "dst_gap",
+    }))
+}
+
+/// The dialect to read: detected, or the one named.
+#[derive(Clone, Copy, Default, Serialize, Deserialize, JsonSchema, clap::ValueEnum)]
+#[serde(rename_all = "lowercase")]
+pub enum DialectArg {
+    #[default]
+    Auto,
+    Unix,
+    Quartz,
+    Aws,
+}
+
+impl DialectArg {
+    pub fn dialect(self) -> Option<Dialect> {
+        match self {
+            DialectArg::Auto => None,
+            DialectArg::Unix => Some(Dialect::Unix),
+            DialectArg::Quartz => Some(Dialect::Quartz),
+            DialectArg::Aws => Some(Dialect::Aws),
+        }
+    }
+}
+
+/// The expression to read, as the page and MCP clients send it.
+#[derive(Deserialize, JsonSchema)]
+pub struct Source {
+    /// A cron expression: Unix (5 fields), Quartz (6-7 fields, seconds first) or AWS cron(...).
+    pub expression: String,
+    /// auto detects the dialect.
+    #[serde(default)]
+    pub dialect: DialectArg,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct NextArgs {
+    #[serde(flatten)]
+    pub source: Source,
+    /// IANA time zone, e.g. America/New_York [default: this computer's; UTC for aws].
+    pub timezone: Option<String>,
+    /// Start after this time: now, 2026-11-01, 2026-11-01T09:00 (in the time zone) or 2026-11-01T09:00:00Z [default: now].
+    pub from: Option<String>,
+    /// Number of runs.
+    #[serde(default = "five")]
+    #[schemars(range(min = 1, max = 1000))]
+    pub count: usize,
+}
+
+fn five() -> usize {
+    5
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct ConvertArgs {
+    #[serde(flatten)]
+    pub source: Source,
+    /// The dialect to write.
+    pub to: Dialect,
+}
+
+/// `{"op": "explain" | "next" | "convert", ...}`: a command as JSON.
+#[derive(Deserialize)]
+#[serde(tag = "op", rename_all = "lowercase")]
+enum Request {
+    Explain(Source),
+    Next(NextArgs),
+    Convert(ConvertArgs),
+}
+
+fn json(answer: impl Serialize) -> Value {
+    serde_json::to_value(answer).expect("answers are plain data")
+}
+
+/// The `--json` answer to a request from the page or an MCP client. A request that
+/// can't be read fails with `bad_request`.
+pub fn answer(request: Value) -> Result<Value, Error> {
+    let bad = |why: &dyn std::fmt::Display| {
+        Error::new("bad_request", format!("Can't read the request: {why}."))
+    };
+    Ok(
+        match serde_json::from_value(request).map_err(|e| bad(&e))? {
+            Request::Explain(s) => json(explain(&s.expression, s.dialect.dialect())?),
+            Request::Next(n) if !(1..=1000).contains(&n.count) => {
+                return Err(bad(&"count must be between 1 and 1000"));
+            }
+            Request::Next(n) => json(next(
+                &n.source.expression,
+                n.source.dialect.dialect(),
+                n.timezone.as_deref(),
+                n.from.as_deref(),
+                n.count,
+            )?),
+            Request::Convert(c) => json(convert(
+                &c.source.expression,
+                c.source.dialect.dialect(),
+                c.to,
+            )?),
+        },
     )
 }
 
@@ -282,5 +395,46 @@ mod tests {
             explain("0 0 1 1 ? 2020", None).unwrap_err().code,
             "never_runs"
         );
+    }
+
+    #[test]
+    fn answers_json_requests_like_the_commands() {
+        let next = answer(
+            json!({"op": "next", "expression": "30 2 * * *", "timezone": "America/New_York", "from": "2027-03-13T12:00", "count": 1}),
+        );
+        assert_eq!(next.unwrap()["runs"][0]["dst"], "moved");
+        let quartz = answer(
+            json!({"op": "convert", "expression": "0 9 * * 1-5", "to": "quartz", "dialect": "unix"}),
+        );
+        assert_eq!(quartz.unwrap()["results"], json!(["0 0 9 ? * MON-FRI"]));
+        let explained = answer(json!({"op": "explain", "expression": "@daily"})).unwrap();
+        assert_eq!(explained["description"], "At 00:00 every day.");
+        let failed = |request| answer(request).unwrap_err();
+        assert_eq!(
+            failed(json!({"op": "explain", "expression": "0 0 30 2 *"})).code,
+            "never_runs"
+        );
+        for (request, why) in [
+            (json!({"op": "explain"}), "missing field `expression`"),
+            (
+                json!({"op": "next", "expression": "@daily", "count": 1001}),
+                "count must be between 1 and 1000",
+            ),
+            (
+                json!({"op": "convert", "expression": "@daily", "to": "cron"}),
+                "unknown variant `cron`, expected one of `unix`, `quartz`, `aws`",
+            ),
+            (
+                json!({"op": "list", "expression": "@daily"}),
+                "unknown variant `list`, expected one of `explain`, `next`, `convert`",
+            ),
+            (json!({"expression": "@daily"}), "missing field `op`"),
+        ] {
+            let e = failed(request);
+            assert_eq!(
+                (e.code, e.message),
+                ("bad_request", format!("Can't read the request: {why}."))
+            );
+        }
     }
 }
