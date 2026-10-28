@@ -1,4 +1,5 @@
-use std::io::Write;
+use std::io::{ErrorKind, Write};
+use std::path::Path;
 use std::process::ExitCode;
 use std::sync::LazyLock;
 
@@ -65,6 +66,18 @@ struct Common {
     debug: bool,
 }
 
+impl Common {
+    /// The words joined into one expression, unless the shell has swapped a `*` for file names.
+    fn expression(&self) -> Result<String, Error> {
+        if self.expr.len() > 1 && self.expr.iter().any(|w| Path::new(w).exists()) {
+            return Err(
+                Error::new("glob_expanded", "Your shell replaced * with file names.")
+                    .hint("Quote the expression: time-cron next \"0 9 * * 1-5\""),
+            );
+        }
+        Ok(self.expr.join(" "))
+    }
+}
 #[derive(Args)]
 struct NextArgs {
     #[command(flatten)]
@@ -106,7 +119,9 @@ fn main() -> ExitCode {
     let (common, answer) = match &cli.command {
         Some(Command::Explain(c)) => (
             c,
-            report::explain(&c.expr.join(" "), dialect(c)).map(|e| show(c, &e, text::explained)),
+            c.expression()
+                .and_then(|x| report::explain(&x, dialect(c)))
+                .map(|e| show(c, &e, text::explained)),
         ),
         Some(Command::Next(n)) => (&n.common, next(n)),
         None => (&cli.next.common, next(&cli.next)),
@@ -130,6 +145,7 @@ fn main() -> ExitCode {
     };
     match anstream::stdout().lock().write_all(out.as_bytes()) {
         Ok(()) => ExitCode::from(code),
+        Err(e) if e.kind() == ErrorKind::BrokenPipe => ExitCode::SUCCESS,
         Err(e) => {
             fail(&Error::new("io", format!("Can't write output: {e}.")));
             ExitCode::from(3)
@@ -138,7 +154,7 @@ fn main() -> ExitCode {
 }
 
 fn next(n: &NextArgs) -> Result<String, Error> {
-    let expression = n.common.expr.join(" ");
+    let expression = n.common.expression()?;
     report::next(
         &expression,
         dialect(&n.common),
