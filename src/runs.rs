@@ -1,5 +1,5 @@
 use jiff::civil::{Date, DateTime, Time, date};
-use jiff::tz::{self, Offset, TimeZone};
+use jiff::tz::{self, AmbiguousOffset, Offset, TimeZone};
 use jiff::{Timestamp, ToSpan, Zoned};
 
 use crate::error::{Error, Warning};
@@ -28,12 +28,24 @@ pub struct Next {
     pub timezone: String,
     pub from: Zoned,
     pub runs: Vec<Run>,
+    /// Wall times the scheduler drops because a DST gap swallows them.
+    pub skipped: Vec<DateTime>,
     pub warnings: Vec<Warning>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Run {
     pub time: Zoned,
+    pub dst: Option<Dst>,
+    /// The wall time a run moved out of a DST gap was meant for.
+    pub scheduled: Option<DateTime>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Dst {
+    Moved,
+    First,
+    Second,
 }
 
 /// The next `count` runs strictly after `from` (default now) in zone `tz` (default the
@@ -54,24 +66,31 @@ pub fn next(
     let tz = zone(s, tz, &mut warnings)?;
     let from = start(from, &tz)?;
     let mut runs = vec![];
+    let mut skipped = vec![];
     for day in days(s, from.date()) {
+        let mut today = vec![];
         for t in times(s) {
-            if let Ok(at) = tz.to_ambiguous_timestamp(day.to_datetime(t)).compatible()
-                && at > from.timestamp()
-            {
-                runs.push(Run {
-                    time: at.to_zoned(tz.clone()),
-                });
-            }
+            resolve(s, &tz, day.to_datetime(t), &mut today, &mut skipped);
         }
+        today.sort_by_key(|r| r.time.timestamp());
+        runs.extend(
+            today
+                .into_iter()
+                .filter(|r| r.time.timestamp() > from.timestamp()),
+        );
         if runs.len() >= count {
             break;
         }
     }
     runs.truncate(count);
-    if runs.is_empty() {
+    let Some(last) = runs.last().map(|r| r.time.timestamp()) else {
         return Err(never_runs(s, &from));
-    }
+    };
+    let skipped = skipped
+        .into_iter()
+        .filter(|(at, _)| *at > from.timestamp() && *at <= last)
+        .map(|(_, dt)| dt)
+        .collect();
     if runs.len() < count {
         let year = s.year.iter().last().unwrap_or(LAST_YEAR as u16);
         warnings.push(Warning::new(
@@ -86,8 +105,54 @@ pub fn next(
         timezone: tz.iana_name().unwrap_or("UTC").to_string(),
         from,
         runs,
+        skipped,
         warnings,
     })
+}
+
+/// Adds the run(s) the scheduler makes for wall time `dt`, or the time it skips, by its own
+/// DST rules: cronie replays fixed-time jobs across shifts of up to 3 hours, Quartz takes
+/// the second pass of a fold, EventBridge the first, and both drop gap times.
+fn resolve(
+    s: &Schedule,
+    tz: &TimeZone,
+    dt: DateTime,
+    runs: &mut Vec<Run>,
+    skipped: &mut Vec<(Timestamp, DateTime)>,
+) {
+    let cronie = |shift: i32| s.dialect == Dialect::Unix && s.fixed_time && shift.abs() <= 3 * 3600;
+    let at = |offset: Offset| offset.to_timestamp(dt).unwrap();
+    let mut run = |ts: Timestamp, dst: Dst| {
+        runs.push(Run {
+            time: ts.to_zoned(tz.clone()),
+            dst: Some(dst),
+            scheduled: (dst == Dst::Moved).then_some(dt),
+        })
+    };
+    match tz.to_ambiguous_timestamp(dt).offset() {
+        AmbiguousOffset::Unambiguous { offset } => runs.push(Run {
+            time: at(offset).to_zoned(tz.clone()),
+            dst: None,
+            scheduled: None,
+        }),
+        AmbiguousOffset::Gap { before, after } => {
+            // The first instant of the new offset.
+            let jump = tz.following(at(after)).next().unwrap().timestamp();
+            if cronie(after.seconds() - before.seconds()) {
+                run(jump, Dst::Moved);
+            } else {
+                skipped.push((jump, dt));
+            }
+        }
+        AmbiguousOffset::Fold { before, after } => match s.dialect {
+            Dialect::Quartz => run(at(after), Dst::Second),
+            Dialect::Unix if !cronie(before.seconds() - after.seconds()) => {
+                run(at(before), Dst::First);
+                run(at(after), Dst::Second);
+            }
+            _ => run(at(before), Dst::First),
+        },
+    }
 }
 
 fn zone(s: &Schedule, name: Option<&str>, warnings: &mut Vec<Warning>) -> Result<TimeZone, Error> {
@@ -248,6 +313,58 @@ mod tests {
             .iter()
             .map(|r| r.time.timestamp().to_string())
             .collect()
+    }
+
+    /// Runs as `time [dst] [scheduled]`, and the skipped wall times.
+    fn runs_in(text: &str, tz: &str, from: &str, count: usize) -> (Vec<String>, Vec<String>) {
+        let n = next(&parse(text, None).unwrap(), Some(tz), Some(from), count).unwrap();
+        let runs = n.runs.iter().map(|r| {
+            let mut line = r
+                .time
+                .timestamp()
+                .display_with_offset(r.time.offset())
+                .to_string();
+            if let Some(dst) = r.dst {
+                line += &format!(" {dst:?}");
+            }
+            if let Some(scheduled) = r.scheduled {
+                line += &format!(" {scheduled}");
+            }
+            line
+        });
+        (
+            runs.collect(),
+            n.skipped.iter().map(DateTime::to_string).collect(),
+        )
+    }
+
+    #[test]
+    #[rustfmt::skip]
+    fn follows_each_schedulers_dst_rules() {
+        const NY: &str = "America/New_York";
+        const SPRING: &str = "2027-03-13T12:00";
+        const AUTUMN: &str = "2026-10-31T23:00";
+        let none: [&str; 0] = [];
+        // cronie runs a fixed-time job lost in the gap right after the jump...
+        let (runs, skipped) = runs_in("30 2 * * *", NY, SPRING, 3);
+        assert_eq!(runs, ["2027-03-14T03:00:00-04:00 Moved 2027-03-14T02:30:00", "2027-03-15T02:30:00-04:00", "2027-03-16T02:30:00-04:00"]);
+        assert_eq!(skipped, none);
+        // ...but skips a wildcard job's gap times.
+        let (runs, skipped) = runs_in("*/15 2 * * *", NY, SPRING, 1);
+        assert_eq!(runs, ["2027-03-15T02:00:00-04:00"]);
+        assert_eq!(skipped, ["2027-03-14T02:00:00", "2027-03-14T02:15:00", "2027-03-14T02:30:00", "2027-03-14T02:45:00"]);
+        // In a fold cronie runs a fixed-time job once and a wildcard job twice.
+        assert_eq!(runs_in("30 1 * * *", NY, AUTUMN, 2).0, ["2026-11-01T01:30:00-04:00 First", "2026-11-02T01:30:00-05:00"]);
+        assert_eq!(
+            runs_in("0 * * * *", NY, AUTUMN, 4).0,
+            ["2026-11-01T00:00:00-04:00", "2026-11-01T01:00:00-04:00 First", "2026-11-01T01:00:00-05:00 Second", "2026-11-01T02:00:00-05:00"]
+        );
+        // Quartz takes the second pass and skips gap times.
+        assert_eq!(runs_in("0 30 1 * * ?", NY, AUTUMN, 2).0, ["2026-11-01T01:30:00-05:00 Second", "2026-11-02T01:30:00-05:00"]);
+        assert_eq!(runs_in("0 30 2 * * ?", NY, SPRING, 1), (vec!["2027-03-15T02:30:00-04:00".into()], vec!["2027-03-14T02:30:00".into()]));
+        // EventBridge takes the first pass and skips gap times.
+        assert_eq!(runs_in("cron(30 1 * * ? *)", NY, AUTUMN, 2).0, ["2026-11-01T01:30:00-04:00 First", "2026-11-02T01:30:00-05:00"]);
+        assert_eq!(runs_in("cron(30 2 * * ? *)", NY, SPRING, 1), (vec!["2027-03-15T02:30:00-04:00".into()], vec!["2027-03-14T02:30:00".into()]));
     }
 
     fn error(
