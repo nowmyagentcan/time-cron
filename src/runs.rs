@@ -8,21 +8,6 @@ use crate::schedule::{DayRule, Dialect, Schedule};
 /// Quartz and AWS stop at 2199, and so does every search.
 const LAST_YEAR: i16 = 2199;
 
-const MONTH_NAMES: [&str; 12] = [
-    "January",
-    "February",
-    "March",
-    "April",
-    "May",
-    "June",
-    "July",
-    "August",
-    "September",
-    "October",
-    "November",
-    "December",
-];
-
 #[derive(Debug)]
 pub struct Next {
     pub timezone: String,
@@ -94,7 +79,7 @@ pub fn next(
     let timezone = tz.iana_name().unwrap_or("UTC").to_string();
     warnings.extend(dst_warnings(s, &tz, &timezone, from.timestamp()));
     if runs.len() < count {
-        let year = s.year.iter().last().unwrap_or(LAST_YEAR as u16);
+        let year = s.year.iter().last().unwrap();
         warnings.push(Warning::new(
             "few_runs",
             format!(
@@ -153,7 +138,7 @@ fn dst_warnings(s: &Schedule, tz: &TimeZone, zone: &str, from: Timestamp) -> Vec
                 shown.push(format!("{} more", hit.len() - 3));
             }
             let times = and_list(shown.into_iter());
-            let cronie = s.dialect == Dialect::Unix && s.fixed_time && shift.abs() <= 3 * 3600;
+            let cronie = cronie(s, shift);
             let (date, was, now) = (lo.date(), hm(old), hm(new));
             Some(if shift > 0 {
                 let what = match s.dialect {
@@ -196,39 +181,39 @@ fn resolve(
     runs: &mut Vec<Run>,
     skipped: &mut Vec<(Timestamp, DateTime)>,
 ) {
-    let cronie = |shift: i32| s.dialect == Dialect::Unix && s.fixed_time && shift.abs() <= 3 * 3600;
     let at = |offset: Offset| offset.to_timestamp(dt).unwrap();
-    let mut run = |ts: Timestamp, dst: Dst| {
+    let mut run = |ts: Timestamp, dst: Option<Dst>| {
         runs.push(Run {
             time: ts.to_zoned(tz.clone()),
-            dst: Some(dst),
-            scheduled: (dst == Dst::Moved).then_some(dt),
+            dst,
+            scheduled: (dst == Some(Dst::Moved)).then_some(dt),
         })
     };
     match tz.to_ambiguous_timestamp(dt).offset() {
-        AmbiguousOffset::Unambiguous { offset } => runs.push(Run {
-            time: at(offset).to_zoned(tz.clone()),
-            dst: None,
-            scheduled: None,
-        }),
+        AmbiguousOffset::Unambiguous { offset } => run(at(offset), None),
         AmbiguousOffset::Gap { before, after } => {
             // The first instant of the new offset.
             let jump = tz.following(at(after)).next().unwrap().timestamp();
-            if cronie(after.seconds() - before.seconds()) {
-                run(jump, Dst::Moved);
+            if cronie(s, after.seconds() - before.seconds()) {
+                run(jump, Some(Dst::Moved));
             } else {
                 skipped.push((jump, dt));
             }
         }
         AmbiguousOffset::Fold { before, after } => match s.dialect {
-            Dialect::Quartz => run(at(after), Dst::Second),
-            Dialect::Unix if !cronie(before.seconds() - after.seconds()) => {
-                run(at(before), Dst::First);
-                run(at(after), Dst::Second);
+            Dialect::Quartz => run(at(after), Some(Dst::Second)),
+            Dialect::Unix if !cronie(s, before.seconds() - after.seconds()) => {
+                run(at(before), Some(Dst::First));
+                run(at(after), Some(Dst::Second));
             }
-            _ => run(at(before), Dst::First),
+            _ => run(at(before), Some(Dst::First)),
         },
     }
+}
+
+/// cronie replays a fixed-time job's runs across a clock shift of up to 3 hours.
+fn cronie(s: &Schedule, shift_seconds: i32) -> bool {
+    s.dialect == Dialect::Unix && s.fixed_time && shift_seconds.abs() <= 3 * 3600
 }
 
 fn zone(s: &Schedule, name: Option<&str>, warnings: &mut Vec<Warning>) -> Result<TimeZone, Error> {
@@ -351,7 +336,7 @@ fn missing_day(s: &Schedule) -> Option<String> {
     let months = s
         .month
         .iter()
-        .map(|m| MONTH_NAMES[m as usize - 1].to_string());
+        .map(|m| date(2000, m as i8, 1).strftime("%B").to_string());
     let days_text = and_list(days.iter().map(u16::to_string));
     let months_text = and_list(months);
     Some(if days.len() == 1 {
