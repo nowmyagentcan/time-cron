@@ -218,7 +218,6 @@ fn separates_fields_only_with_spaces_and_tabs() {
 }
 
 #[test]
-#[ignore = "known bug: big_step fires for any step that leaves one value"]
 fn does_not_call_a_step_of_one_too_big() {
     for expr in ["0 0 23/1 * * ?", "0 0 23-23/1 * * ?"] {
         let (_, v) = json(&["explain", expr]);

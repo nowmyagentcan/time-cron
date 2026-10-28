@@ -96,7 +96,9 @@ pub fn lint(s: &Schedule) -> Vec<Warning> {
     let parser = Parser(s.dialect);
     for f in &s.fields {
         for item in f.text.split(',') {
+            // A step of 1 skips nothing: a single value then comes from the range alone.
             if let Some((_, step)) = item.split_once('/')
+                && step.parse::<u32>().is_ok_and(|n| n > 1)
                 && let Ok(&[only]) = parser.values(f.kind, item).as_deref()
             {
                 warn(
