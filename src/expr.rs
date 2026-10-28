@@ -1,7 +1,7 @@
 use crate::error::Error;
 use crate::schedule::Dialect::{self, Aws, Quartz, Unix};
 use crate::schedule::Kind::{self, DayOfMonth, DayOfWeek, Hour, Minute, Month, Second, Year};
-use crate::schedule::{DayRule, Dom, Dow, Field, Schedule, Set};
+use crate::schedule::{DayRule, Dom, DomSpecial, Dow, Field, Schedule, Set};
 
 const MONTHS: [&str; 12] = [
     "JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC",
@@ -69,7 +69,18 @@ pub fn parse(text: &str, forced: Option<Dialect>) -> Result<Schedule, Error> {
     }
     let field = |kind| s.fields.iter().find(|f| f.kind == kind).unwrap();
     let (dom, dow) = (field(DayOfMonth), field(DayOfWeek));
-    s.day_rule = if !dom.star() && !dow.star() {
+    s.day_rule = if dialect != Unix {
+        match (dom.text == "?", dow.text == "?") {
+            (true, false) => DayRule::DowOnly,
+            (false, true) => DayRule::DomOnly,
+            _ => {
+                return Err(p.question_mark(format!(
+                    "{} needs '?' in exactly one of day of month and day of week.",
+                    dialect.title()
+                )));
+            }
+        }
+    } else if !dom.star() && !dow.star() {
         DayRule::Or
     } else if s.dom.days == (1..=31).collect() {
         DayRule::DowOnly
@@ -121,6 +132,11 @@ impl Parser {
             {
                 return Err(unix_special(c));
             }
+            if item.contains('?') && !matches!(f.kind, DayOfMonth | DayOfWeek) {
+                return Err(
+                    self.question_mark("'?' is only allowed in day of month or day of week.")
+                );
+            }
         }
         Ok(items)
     }
@@ -136,15 +152,118 @@ impl Parser {
     }
 
     fn dom(&self, f: &Field) -> Result<Dom, Error> {
-        Ok(Dom {
-            days: self.set(f)?,
+        let mut dom = Dom {
+            days: Set::EMPTY,
             specials: vec![],
-        })
+        };
+        if self.0 != Unix && f.text == "?" {
+            return Ok(dom);
+        }
+        for item in self.items(f)? {
+            let up = item.to_ascii_uppercase();
+            if self.0 != Unix
+                && let Some(rest) = up.strip_prefix('L')
+            {
+                let (rest, weekday) = rest.strip_suffix('W').map_or((rest, false), |r| (r, true));
+                let offset = match rest.strip_prefix('-').map(digits) {
+                    None if rest.is_empty() => 0,
+                    Some(Some(n)) if n <= 30 => n as u8,
+                    Some(Some(_)) => {
+                        let n = &rest[1..];
+                        return Err(Error::new(
+                            "l_offset",
+                            format!("L-{n}: the offset can be at most 30."),
+                        ));
+                    }
+                    _ => return Err(self.bad_syntax(DayOfMonth, item)),
+                };
+                dom.specials.push(DomSpecial::Last { offset, weekday });
+            } else if self.0 != Unix
+                && let Some(day) = up.strip_suffix('W')
+            {
+                if day.contains(['-', '/', '*']) {
+                    return Err(Error::new(
+                        "w_needs_day",
+                        "'W' needs a single day of the month, like 15W.",
+                    ));
+                }
+                let day = self.value(DayOfMonth, day, item)?;
+                dom.specials.push(DomSpecial::Nearest(day as u8));
+            } else {
+                for v in self.values(DayOfMonth, item)? {
+                    dom.days.insert(v);
+                }
+            }
+        }
+        Ok(dom)
     }
 
     fn dow(&self, f: &Field) -> Result<Dow, Error> {
-        // Unix allows 7 for Sunday as well as 0.
-        Ok(Dow::Days(self.set::<1>(f)?.iter().map(|d| d % 7).collect()))
+        if self.0 == Unix {
+            // Unix allows 7 for Sunday as well as 0.
+            return Ok(Dow::Days(self.set::<1>(f)?.iter().map(|d| d % 7).collect()));
+        }
+        if f.text == "?" {
+            return Ok(Dow::Days(Set::EMPTY));
+        }
+        let items = self.items(f)?;
+        // Quartz counts from 1 = Sunday.
+        let day = |tok: &str, item: &str| self.value(DayOfWeek, tok, item).map(|d| d as u8 - 1);
+        if let Some((d, n)) = f.text.split_once('#') {
+            if items.len() > 1 || n.contains('#') {
+                return Err(Error::new(
+                    "multiple_nth",
+                    "Only one '#' day is allowed, on its own.",
+                ));
+            }
+            let d_num = day(d, &f.text)?;
+            return match digits(n) {
+                Some(m @ 1..=5) => Ok(Dow::Nth(d_num, m as u8)),
+                Some(_) => Err(Error::new(
+                    "nth_range",
+                    format!("In {d}#{n}, {n} must be 1-5."),
+                )),
+                None => Err(self.bad_syntax(DayOfWeek, &f.text)),
+            };
+        }
+        if self.0 == Aws && f.text.contains('/') {
+            return Err(
+                Error::new("aws_dow_step", "AWS cron doesn't allow '/' in day of week.")
+                    .hint("List the days instead, e.g. MON,WED,FRI."),
+            );
+        }
+        let mut set = Set::EMPTY;
+        for item in &items {
+            let up = item.to_ascii_uppercase();
+            if let Some(d) = up.strip_suffix('L')
+                && (d.is_empty() || digits(d).is_some() || DAYS.contains(&d))
+            {
+                if items.len() > 1 {
+                    return Err(Error::new(
+                        "l_in_list",
+                        "Quartz doesn't allow 'L' in a list of days of the week.",
+                    ));
+                }
+                // A bare L is Saturday, the last day of the week.
+                return Ok(if d.is_empty() {
+                    Dow::Days([6].into_iter().collect())
+                } else {
+                    Dow::Last(day(d, item)?)
+                });
+            }
+            for v in self.values(DayOfWeek, item)? {
+                set.insert(v - 1);
+            }
+        }
+        Ok(Dow::Days(set))
+    }
+
+    fn question_mark(&self, message: impl Into<String>) -> Error {
+        Error::new("question_mark", message).hint(if self.0 == Aws {
+            "Example: cron(0 9 ? * MON-FRI *)"
+        } else {
+            "Example: 0 0 9 ? * MON-FRI"
+        })
     }
 
     /// Expands `*`, `n`, `a-b`, `a/s` and `a-b/s`.
@@ -488,6 +607,52 @@ mod tests {
         assert_eq!(rule("0 9 * * MON"), DayRule::DowOnly);
         assert_eq!(rule("0 9 */2 * *"), DayRule::DomOnly);
         assert_eq!(rule("0 9 * * *"), DayRule::DowOnly);
+    }
+
+    #[test]
+    fn parses_quartz_and_aws_fields() {
+        let q = |text| parse(text, None).unwrap();
+        let s = q("*/30 0/15 22-2 ? * 1-5");
+        assert_eq!(s.dialect, Quartz);
+        assert_eq!(list(s.second), [0, 30]);
+        assert_eq!(list(s.minute), [0, 15, 30, 45]);
+        assert_eq!(list(s.hour), [0, 1, 2, 22, 23]);
+        assert_eq!(weekdays(&s), [0, 1, 2, 3, 4]);
+        assert_eq!(s.day_rule, DayRule::DowOnly);
+        assert_eq!(weekdays(&q("0 0 12 ? * FRI-MON")), [0, 1, 5, 6]);
+        assert_eq!(list(q("0 0 12 28-2 * ?").dom.days), [1, 2, 28, 29, 30, 31]);
+        assert_eq!(list(q("0 0 12 1 11-2 ?").month), [1, 2, 11, 12]);
+        assert_eq!(list(q("0 0 12 1 1 ? 2030").year), [2030]);
+        assert_eq!(q("0 0 12 1 1 ?").year.iter().count(), 230);
+
+        let s = q("cron(0 18 ? * MON-FRI *)");
+        assert_eq!((s.dialect, s.fields.len()), (Aws, 6));
+        assert_eq!(
+            (list(s.second), list(s.minute), list(s.hour)),
+            (vec![0], vec![0], vec![18])
+        );
+        assert_eq!(weekdays(&s), [1, 2, 3, 4, 5]);
+        assert_eq!(q("cron(0 8 1 * ? *)").day_rule, DayRule::DomOnly);
+    }
+
+    #[test]
+    fn reads_quartz_day_specials() {
+        let dow = |text| parse(text, None).unwrap().dow;
+        assert_eq!(dow("0 0 12 ? * MON#2"), Dow::Nth(1, 2));
+        assert_eq!(dow("0 0 12 ? * 2#5"), Dow::Nth(1, 5));
+        assert_eq!(dow("0 15 10 ? * 6L"), Dow::Last(5));
+        assert_eq!(dow("0 15 10 ? * fril"), Dow::Last(5));
+        assert_eq!(dow("0 0 12 ? * L"), Dow::Days([6].into_iter().collect()));
+
+        let dom = |text| parse(text, None).unwrap().dom;
+        let last = |offset, weekday| DomSpecial::Last { offset, weekday };
+        assert_eq!(dom("0 0 9 15W * ?").specials, [DomSpecial::Nearest(15)]);
+        assert_eq!(dom("0 0 9 LW * ?").specials, [last(0, true)]);
+        assert_eq!(dom("0 0 12 L-3 * ?").specials, [last(3, false)]);
+        assert_eq!(dom("0 0 12 l-30w * ?").specials, [last(30, true)]);
+        let d = dom("0 0 12 L,15 * ?");
+        assert_eq!((d.specials, list(d.days)), (vec![last(0, false)], vec![15]));
+        assert_eq!(dom("cron(0 12 L * ? *)").specials, [last(0, false)]);
     }
 
     #[test]
