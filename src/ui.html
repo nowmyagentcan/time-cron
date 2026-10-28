@@ -184,7 +184,7 @@ function done(n, c) {
       : c.results.map(x => `<span class="muted">${NAMES[c.to]}</span><code>${esc(x)}</code><button type="button" data-copy="${esc(x)}">${COPY}Copy</button>`).join("")}</div>` : "");
 }
 
-let latest = 0;
+let latest = 0, wait;
 form.addEventListener("submit", async ev => {
   ev.preventDefault();
   const run = ++latest;
@@ -193,7 +193,9 @@ form.addEventListener("submit", async ev => {
   if (tz.dataset.touched && tz.value.trim()) next.timezone = tz.value.trim();
   if ($("#from").value) next.from = $("#from").value;
   const to = $("#to").value;
-  const wait = setTimeout(() => {
+  // One loading timer for the newest submit only, so an older one can't cover its result.
+  clearTimeout(wait);
+  wait = setTimeout(() => {
     out.setAttribute("aria-busy", "true");
     out.innerHTML = `<div class="bar" role="progressbar" aria-label="Working"></div><p class="muted">Working out the run times…</p>`;
   }, 150);
@@ -204,8 +206,8 @@ form.addEventListener("submit", async ev => {
   } catch {
     n = { error: { message: "Can't reach time-cron.", hint: "Start it again with: time-cron ui" } };
   }
-  clearTimeout(wait);
   if (run !== latest) return;
+  clearTimeout(wait);
   out.removeAttribute("aria-busy");
   if (n.error) out.innerHTML = failure(n.error); else done(n, c);
 });
