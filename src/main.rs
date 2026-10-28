@@ -78,6 +78,7 @@ impl Common {
         Ok(self.expr.join(" "))
     }
 }
+
 #[derive(Args)]
 struct NextArgs {
     #[command(flatten)]
