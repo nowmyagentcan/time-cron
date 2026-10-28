@@ -1,5 +1,12 @@
 use crate::error::Error;
 use crate::schedule::Dialect::{self, Aws, Quartz, Unix};
+use crate::schedule::Kind::{self, DayOfMonth, DayOfWeek, Hour, Minute, Month, Second, Year};
+use crate::schedule::{DayRule, Dom, Dow, Field, Schedule, Set};
+
+const MONTHS: [&str; 12] = [
+    "JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC",
+];
+const DAYS: [&str; 7] = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
 
 const NICKNAMES: [(&str, &str); 8] = [
     ("@yearly", "0 0 1 1 *"),
@@ -12,10 +19,303 @@ const NICKNAMES: [(&str, &str); 8] = [
     ("@reboot", ""),
 ];
 
+/// Parses an expression in the given dialect, or the detected one when `forced` is `None`.
+pub fn parse(text: &str, forced: Option<Dialect>) -> Result<Schedule, Error> {
+    let (dialect, texts) = read(text, forced)?;
+    let kinds: &[Kind] = match (dialect, texts.len()) {
+        (Unix, _) => &[Minute, Hour, DayOfMonth, Month, DayOfWeek],
+        (Quartz, 6) => &[Second, Minute, Hour, DayOfMonth, Month, DayOfWeek],
+        (Quartz, _) => &[Second, Minute, Hour, DayOfMonth, Month, DayOfWeek, Year],
+        (Aws, _) => &[Minute, Hour, DayOfMonth, Month, DayOfWeek, Year],
+    };
+    let mut s = Schedule {
+        dialect,
+        fields: kinds
+            .iter()
+            .zip(&texts)
+            .map(|(&kind, text)| Field {
+                kind,
+                text: text.to_string(),
+            })
+            .collect(),
+        second: [0].into_iter().collect(),
+        minute: Set::EMPTY,
+        hour: Set::EMPTY,
+        dom: Dom {
+            days: Set::EMPTY,
+            specials: vec![],
+        },
+        month: Set::EMPTY,
+        dow: Dow::Days(Set::EMPTY),
+        year: (1970..=2199).collect(),
+        day_rule: DayRule::And,
+        fixed_time: false,
+        reboot: texts.is_empty(),
+    };
+    if s.reboot {
+        return Ok(s);
+    }
+    let p = Parser(dialect);
+    for f in &s.fields {
+        match f.kind {
+            Second => s.second = p.set(f)?,
+            Minute => s.minute = p.set(f)?,
+            Hour => s.hour = p.set(f)?,
+            DayOfMonth => s.dom = p.dom(f)?,
+            Month => s.month = p.set(f)?,
+            DayOfWeek => s.dow = p.dow(f)?,
+            Year => s.year = p.set(f)?,
+        }
+    }
+    let field = |kind| s.fields.iter().find(|f| f.kind == kind).unwrap();
+    let (dom, dow) = (field(DayOfMonth), field(DayOfWeek));
+    s.day_rule = if !dom.star() && !dow.star() {
+        DayRule::Or
+    } else if s.dom.days == (1..=31).collect() {
+        DayRule::DowOnly
+    } else if s.dow == Dow::Days((0..7).collect()) {
+        DayRule::DomOnly
+    } else {
+        DayRule::And
+    };
+    s.fixed_time = !field(Minute).star() && !field(Hour).star();
+    Ok(s)
+}
+
+struct Parser(Dialect);
+
+impl Parser {
+    fn bounds(&self, kind: Kind) -> (u16, u16) {
+        match kind {
+            Second | Minute => (0, 59),
+            Hour => (0, 23),
+            DayOfMonth => (1, 31),
+            Month => (1, 12),
+            DayOfWeek if self.0 == Unix => (0, 7),
+            DayOfWeek => (1, 7),
+            Year => (1970, 2199),
+        }
+    }
+
+    /// The field's list items, after turning away syntax from other schedulers.
+    fn items<'a>(&self, f: &'a Field) -> Result<Vec<&'a str>, Error> {
+        let items: Vec<&str> = f.text.split(',').collect();
+        for item in &items {
+            let up = item.to_ascii_uppercase();
+            if item.contains('~') {
+                return Err(Error::new(
+                    "random_value",
+                    "'~' picks a random time when cron loads the crontab, so the run times can't be predicted.",
+                )
+                .hint("Replace it with a fixed value."));
+            }
+            if up == "H" || up.starts_with("H/") || up.starts_with("H(") {
+                return Err(Error::new(
+                    "jenkins_hash",
+                    "'H' is Jenkins syntax, which time-cron doesn't read.",
+                )
+                .hint("Replace it with a fixed value."));
+            }
+            if self.0 == Unix
+                && let Some(c) = item.chars().find(|c| matches!(c, '?' | '#'))
+            {
+                return Err(unix_special(c));
+            }
+        }
+        Ok(items)
+    }
+
+    fn set<const W: usize>(&self, f: &Field) -> Result<Set<W>, Error> {
+        let mut set = Set::EMPTY;
+        for item in self.items(f)? {
+            self.values(f.kind, item)?
+                .into_iter()
+                .for_each(|v| set.insert(v));
+        }
+        Ok(set)
+    }
+
+    fn dom(&self, f: &Field) -> Result<Dom, Error> {
+        Ok(Dom {
+            days: self.set(f)?,
+            specials: vec![],
+        })
+    }
+
+    fn dow(&self, f: &Field) -> Result<Dow, Error> {
+        // Unix allows 7 for Sunday as well as 0.
+        Ok(Dow::Days(self.set::<1>(f)?.iter().map(|d| d % 7).collect()))
+    }
+
+    /// Expands `*`, `n`, `a-b`, `a/s` and `a-b/s`.
+    fn values(&self, kind: Kind, item: &str) -> Result<Vec<u16>, Error> {
+        let (lo, hi) = self.bounds(kind);
+        // Hints name Saturday as the last day, not Unix's second Sunday.
+        let max = if kind == DayOfWeek { hi.min(6) } else { hi };
+        let (range, step) = match item.split_once('/') {
+            Some((r, s)) => (r, Some((s, self.step(kind, s, item)?))),
+            None => (item, None),
+        };
+        let (a, mut b) = match range.split_once('-') {
+            _ if range == "*" => (lo, hi),
+            Some((a, b)) => (self.value(kind, a, item)?, self.value(kind, b, item)?),
+            None => {
+                let a = self.value(kind, range, item)?;
+                match step {
+                    None => (a, a),
+                    Some((s, _)) if self.0 == Unix => {
+                        return Err(Error::new(
+                            "lone_step",
+                            format!("Unix cron doesn't allow '{range}/{s}'."),
+                        )
+                        .hint(format!("Write {range}-{max}/{s} or */{s}.")));
+                    }
+                    Some(_) => (a, hi),
+                }
+            }
+        };
+        if self.0 == Unix && kind == DayOfWeek && b == 0 && a > b {
+            b = 7; // `5-0` means Friday through Sunday
+        }
+        let span = hi - lo + 1;
+        let end = if a <= b {
+            b
+        } else if self.0 != Unix && kind != Year {
+            b + span // Quartz ranges wrap: `22-2` is 22, 23, 0, 1, 2
+        } else {
+            let (ta, tb) = range.split_once('-').unwrap();
+            let e = Error::new(
+                "backward_range",
+                format!("The range {range} goes backwards."),
+            );
+            return Err(if kind == Year {
+                e.hint("Write the smaller value first.")
+            } else {
+                e.hint(format!(
+                    "Write the smaller value first, or split it: {ta}-{max},{lo}-{tb}."
+                ))
+            });
+        };
+        Ok((a..=end)
+            .step_by(step.map_or(1, |(_, n)| n))
+            .map(|v| if v > hi { v - span } else { v })
+            .collect())
+    }
+
+    fn step(&self, kind: Kind, text: &str, item: &str) -> Result<usize, Error> {
+        let n = digits(text).ok_or_else(|| self.bad_syntax(kind, item))?;
+        if n == 0 {
+            return Err(Error::new("zero_step", "A step must be 1 or more."));
+        }
+        let limit = match kind {
+            Second | Minute => 60,
+            Hour => 24,
+            DayOfMonth => 31,
+            Month => 12,
+            DayOfWeek => 7,
+            Year => u32::MAX,
+        };
+        if self.0 != Unix && n >= limit {
+            return Err(Error::new(
+                "step_too_large",
+                format!(
+                    "Step /{text} is too large for the {} field (Quartz needs less than {limit}).",
+                    kind.words()
+                ),
+            ));
+        }
+        Ok(n as usize)
+    }
+
+    /// A number or a three-letter name, checked against the field's range.
+    fn value(&self, kind: Kind, tok: &str, item: &str) -> Result<u16, Error> {
+        let (lo, hi) = self.bounds(kind);
+        if let Some(v) = digits(tok) {
+            if (lo as u32..=hi as u32).contains(&v) {
+                return Ok(v as u16);
+            }
+            if kind == Year {
+                return Err(Error::new(
+                    "year_range",
+                    format!("Year {tok} is out of range 1970-2199."),
+                ));
+            }
+            let words = kind.words();
+            let e = Error::new(
+                "out_of_range",
+                format!(
+                    "{}{} value {tok} is out of range {lo}-{hi}.",
+                    words[..1].to_ascii_uppercase(),
+                    &words[1..]
+                ),
+            );
+            return Err(if kind == DayOfWeek && self.0 != Unix {
+                e.hint("Day 1 is Sunday and 7 is Saturday here.")
+            } else {
+                e
+            });
+        }
+        let up = tok.to_ascii_uppercase();
+        let names: &[&str] = match kind {
+            Month => &MONTHS,
+            DayOfWeek => &DAYS,
+            _ => &[],
+        };
+        if let Some(i) = names.iter().position(|n| *n == up) {
+            let first = if kind == DayOfWeek && self.0 == Unix {
+                0
+            } else {
+                1
+            };
+            return Ok(i as u16 + first);
+        }
+        if self.0 == Unix
+            && up
+                .chars()
+                .all(|c| c.is_ascii_digit() || c == 'L' || c == 'W')
+            && let Some(c) = up.chars().find(|c| !c.is_ascii_digit())
+        {
+            return Err(unix_special(c));
+        }
+        if !names.is_empty() && !tok.is_empty() && tok.chars().all(|c| c.is_ascii_alphabetic()) {
+            let what = if kind == Month { "month" } else { "day" };
+            return Err(
+                Error::new("unknown_name", format!("Unknown {what} name '{tok}'."))
+                    .hint("Use three-letter names: JAN-DEC, SUN-SAT."),
+            );
+        }
+        Err(self.bad_syntax(kind, item))
+    }
+
+    fn bad_syntax(&self, kind: Kind, item: &str) -> Error {
+        let hint = "Use numbers, *, ranges (1-5), lists (1,3) and steps (*/15)";
+        Error::new(
+            "bad_syntax",
+            format!("Can't read '{item}' in the {} field.", kind.words()),
+        )
+        .hint(if self.0 == Unix {
+            format!("{hint}.")
+        } else {
+            format!("{hint}, and ? L W # where the field allows them.")
+        })
+    }
+}
+
+fn unix_special(c: char) -> Error {
+    Error::new("unix_special", format!("'{c}' isn't Unix cron syntax."))
+        .hint("Pass --dialect quartz or aws, or list the days.")
+}
+
+/// A run of ASCII digits; too many digits read as `u32::MAX` so they fail range checks.
+fn digits(text: &str) -> Option<u32> {
+    (!text.is_empty() && text.bytes().all(|b| b.is_ascii_digit()))
+        .then(|| text.parse().unwrap_or(u32::MAX))
+}
+
 /// Checks the raw text, expands a nickname, strips `cron(...)` and works out the dialect
 /// (`forced` when the user named one). Returns the dialect and the field texts; `@reboot`
 /// is the only input that yields no fields.
-pub fn read(text: &str, forced: Option<Dialect>) -> Result<(Dialect, Vec<&str>), Error> {
+fn read(text: &str, forced: Option<Dialect>) -> Result<(Dialect, Vec<&str>), Error> {
     let text = text.trim();
     if text.is_empty() {
         return Err(Error::new("empty", "No cron expression given.")
@@ -131,6 +431,77 @@ fn starts_with_ignore_case(text: &str, prefix: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn unix(text: &str) -> Schedule {
+        parse(text, None).unwrap()
+    }
+
+    fn list<const W: usize>(set: Set<W>) -> Vec<u16> {
+        set.iter().collect()
+    }
+
+    fn weekdays(s: &Schedule) -> Vec<u16> {
+        match s.dow {
+            Dow::Days(set) => list(set),
+            other => panic!("not a day set: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_unix_fields() {
+        let s = unix("*/15 9-17 * * 1-5");
+        assert_eq!(list(s.second), [0]);
+        assert_eq!(list(s.minute), [0, 15, 30, 45]);
+        assert_eq!(list(s.hour), (9..=17).collect::<Vec<_>>());
+        assert_eq!(list(s.dom.days), (1..=31).collect::<Vec<_>>());
+        assert_eq!(list(s.month), (1..=12).collect::<Vec<_>>());
+        assert_eq!(weekdays(&s), [1, 2, 3, 4, 5]);
+        assert_eq!(s.year.iter().count(), 230);
+        assert_eq!(s.fields[0].kind, Minute);
+        assert_eq!(s.fields[4].text, "1-5");
+        assert!(!s.fixed_time);
+        assert!(unix("0 9 * * 1-5").fixed_time);
+    }
+
+    #[test]
+    fn reads_lists_ranges_steps_and_names() {
+        assert_eq!(
+            list(unix("1,5-7,20-40/10 * * * *").minute),
+            [1, 5, 6, 7, 20, 30, 40]
+        );
+        assert_eq!(list(unix("*/90 * * * *").minute), [0]);
+        assert_eq!(list(unix("0 0 1 jan-Mar,DEC *").month), [1, 2, 3, 12]);
+        assert_eq!(weekdays(&unix("0 0 * * 5-0")), [0, 5, 6]);
+        assert_eq!(weekdays(&unix("0 0 * * FRI-SUN")), [0, 5, 6]);
+        assert_eq!(weekdays(&unix("0 0 * * 7")), [0]);
+        assert_eq!(weekdays(&unix("0 0 * * 0-7")), (0..7).collect::<Vec<_>>());
+        assert_eq!(weekdays(&unix("0 0 * * */2")), [0, 2, 4, 6]);
+        assert_eq!(list(unix("0 0 */31 2 MON").dom.days), [1]);
+    }
+
+    #[test]
+    fn day_fields_combine_like_cronie() {
+        let rule = |text| unix(text).day_rule;
+        assert_eq!(rule("0 9 1 * MON"), DayRule::Or);
+        assert_eq!(rule("0 9 1-31 * MON"), DayRule::Or);
+        assert_eq!(rule("0 9 */2 * MON"), DayRule::And);
+        assert_eq!(rule("0 9 * * MON"), DayRule::DowOnly);
+        assert_eq!(rule("0 9 */2 * *"), DayRule::DomOnly);
+        assert_eq!(rule("0 9 * * *"), DayRule::DowOnly);
+    }
+
+    #[test]
+    fn nicknames_report_their_expansion() {
+        let s = unix("@daily");
+        assert_eq!(
+            s.fields.iter().map(|f| &f.text[..]).collect::<Vec<_>>(),
+            ["0", "0", "*", "*", "*"]
+        );
+        assert!(s.fixed_time);
+        assert!(!unix("@hourly").fixed_time);
+        let r = unix("@reboot");
+        assert!(r.reboot && r.fields.is_empty());
+    }
 
     fn dialect(text: &str) -> Result<Dialect, &'static str> {
         read(text, None).map(|(d, _)| d).map_err(|e| e.code)
