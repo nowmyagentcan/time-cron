@@ -18,6 +18,13 @@ impl Dialect {
         }
     }
 
+    /// The dialect a name such as "quartz" stands for, in any case.
+    pub fn from_name(name: &str) -> Option<Dialect> {
+        [Dialect::Unix, Dialect::Quartz, Dialect::Aws]
+            .into_iter()
+            .find(|d| d.name().eq_ignore_ascii_case(name))
+    }
+
     /// The name in messages: "Quartz has 6 or 7 fields".
     pub fn title(self) -> &'static str {
         match self {

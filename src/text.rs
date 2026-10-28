@@ -4,7 +4,7 @@
 use std::fmt::Write;
 
 use crate::error::{Error, Warning};
-use crate::report::{Explained, Upcoming};
+use crate::report::{Converted, Explained, Upcoming};
 use crate::runs::Dst;
 use crate::schedule::Dialect;
 
@@ -72,6 +72,16 @@ pub fn upcoming(u: &Upcoming) -> String {
         );
     }
     out + &warnings(&u.warnings)
+}
+
+/// The converted expressions, one per line: all that `$(time-cron convert …)` captures.
+pub fn converted(c: &Converted) -> String {
+    c.results.iter().map(|r| format!("{r}\n")).collect()
+}
+
+/// The description and warnings that go with a conversion, for stderr.
+pub fn notes(c: &Converted) -> String {
+    format!("{BOLD}{}{RESET}\n", c.description) + &warnings(&c.warnings)
 }
 
 /// What failed, then how to fix it.
@@ -186,6 +196,18 @@ America/New_York · tzdata 2026f · Unix cron rules
     fn shows_seconds_only_when_a_run_has_them() {
         let u = next("15 30 9 * * ?", None, Some("UTC"), Some("2026-10-29"), 1).unwrap();
         assert!(plain(upcoming(&u)).contains("  Thu 2026-10-29 09:30:15 +00:00\n"));
+    }
+
+    #[test]
+    fn keeps_converted_expressions_apart_from_notes() {
+        let c = crate::report::convert("0 0 1,15 * FRI", None, Dialect::Quartz).unwrap();
+        assert_eq!(converted(&c), "0 0 0 1,15 * ?\n0 0 0 ? * FRI\n");
+        assert_eq!(
+            plain(notes(&c)),
+            "At 00:00, on day 1 and 15 of the month, or on Friday.
+! Quartz can't match day of month OR day of week in one expression, so this needs two triggers.
+"
+        );
     }
 
     #[test]

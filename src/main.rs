@@ -16,7 +16,8 @@ const EXAMPLES: &str = "\x1b[1;4mExamples:\x1b[0m
   time-cron \"*/15 9-17 * * 1-5\"
   time-cron next \"0 9 * * 1-5\" --tz Europe/Berlin --count 10
   time-cron next \"0 0 12 ? * MON#2\" --json
-  time-cron explain \"cron(0 18 ? * MON-FRI *)\"";
+  time-cron explain \"cron(0 18 ? * MON-FRI *)\"
+  time-cron convert \"*/15 9-17 * * 1-5\" --to quartz";
 
 #[derive(Parser)]
 #[command(
@@ -44,6 +45,18 @@ enum Command {
     /// List the next run times (the default command)
     #[command(after_help = EXAMPLES)]
     Next(NextArgs),
+    /// Rewrite the expression for unix, quartz or aws
+    #[command(after_help = EXAMPLES)]
+    Convert(ConvertArgs),
+}
+
+#[derive(Args)]
+struct ConvertArgs {
+    #[command(flatten)]
+    common: Common,
+    /// Target dialect: unix, quartz or aws
+    #[arg(long, value_name = "D", value_parser = target)]
+    to: Dialect,
 }
 
 #[derive(Args)]
@@ -109,6 +122,10 @@ fn count(s: &str) -> Result<usize, &'static str> {
         .ok_or("must be between 1 and 1000")
 }
 
+fn target(s: &str) -> Result<Dialect, &'static str> {
+    Dialect::from_name(s).ok_or("must be unix, quartz or aws")
+}
+
 fn main() -> ExitCode {
     if std::env::args_os().len() == 1 {
         let e =
@@ -125,27 +142,32 @@ fn main() -> ExitCode {
                 .map(|e| show(c, &e, text::explained)),
         ),
         Some(Command::Next(n)) => (&n.common, next(n)),
+        Some(Command::Convert(c)) => (&c.common, convert(c)),
         None => (&cli.next.common, next(&cli.next)),
     };
     if common.debug {
         debug(common);
     }
-    let (out, code) = match answer {
-        Ok(out) => (out, 0),
+    let (out, notes, code) = match answer {
+        Ok((out, notes)) => (out, notes, 0),
         Err(error) => {
             if common.debug {
                 eprintln!("debug: {error:?}");
             }
             if common.json {
-                (json(&report::Failure { error: &error }), error.exit_code())
+                let out = json(&report::Failure { error: &error });
+                (out, String::new(), error.exit_code())
             } else {
                 fail(&error);
-                (String::new(), error.exit_code())
+                (String::new(), String::new(), error.exit_code())
             }
         }
     };
     match anstream::stdout().lock().write_all(out.as_bytes()) {
-        Ok(()) => ExitCode::from(code),
+        Ok(()) => {
+            anstream::eprint!("{notes}");
+            ExitCode::from(code)
+        }
         Err(e) if e.kind() == ErrorKind::BrokenPipe => ExitCode::SUCCESS,
         Err(e) => {
             fail(&Error::new("io", format!("Can't write output: {e}.")));
@@ -154,7 +176,7 @@ fn main() -> ExitCode {
     }
 }
 
-fn next(n: &NextArgs) -> Result<String, Error> {
+fn next(n: &NextArgs) -> Result<(String, String), Error> {
     let expression = n.common.expression()?;
     report::next(
         &expression,
@@ -166,13 +188,28 @@ fn next(n: &NextArgs) -> Result<String, Error> {
     .map(|u| show(&n.common, &u, text::upcoming))
 }
 
-/// The answer as `--json` or as text.
-fn show<T: Serialize>(c: &Common, answer: &T, text: fn(&T) -> String) -> String {
-    if c.json {
+/// The results on stdout; the description and warnings on stderr, unless `--json`.
+fn convert(c: &ConvertArgs) -> Result<(String, String), Error> {
+    let expression = c.common.expression()?;
+    let answer = report::convert(&expression, dialect(&c.common), c.to)?;
+    Ok(if c.common.json {
+        (json(&answer), String::new())
+    } else {
+        (
+            people(text::converted(&answer)),
+            people(text::notes(&answer)),
+        )
+    })
+}
+
+/// The answer as `--json` or as text, for stdout, and nothing for stderr.
+fn show<T: Serialize>(c: &Common, answer: &T, text: fn(&T) -> String) -> (String, String) {
+    let out = if c.json {
         json(answer)
     } else {
         people(text(answer))
-    }
+    };
+    (out, String::new())
 }
 
 fn json(value: &impl Serialize) -> String {

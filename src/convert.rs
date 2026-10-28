@@ -1,15 +1,82 @@
 //! Rewrites a schedule for another dialect.
 
 use crate::describe::{numbers, step};
-use crate::error::Error;
-use crate::expr::DAYS;
+use crate::error::{Error, Warning};
+use crate::expr::{DAYS, parse};
+use crate::lint::lint;
+use crate::runs;
 use crate::schedule::Dialect::{self, Aws, Quartz, Unix};
 use crate::schedule::Kind::{self, DayOfMonth, DayOfWeek, Hour, Minute, Month, Second, Year};
 use crate::schedule::{DayRule, DomSpecial, Dow, Schedule};
 
+#[derive(Debug)]
+pub struct Conversion {
+    pub results: Vec<String>,
+    pub warnings: Vec<Warning>,
+}
+
+/// The schedule written in `to`, given only once each result is shown to run at the same
+/// times as the source.
+pub fn convert(s: &Schedule, to: Dialect) -> Result<Conversion, Error> {
+    let results = rewrite(s, to)?;
+    let mut warnings = vec![];
+    if results.len() == 2 {
+        let many = if to == Quartz {
+            "triggers"
+        } else {
+            "rules or schedules"
+        };
+        warnings.push(Warning::new(
+            "split",
+            format!(
+                "{} can't match day of month OR day of week in one expression, so this needs two {many}.",
+                to.title()
+            ),
+        ));
+    }
+    warnings.extend(check(s, to, &results)?);
+    Ok(Conversion { results, warnings })
+}
+
+/// Re-reads each result and compares the first 100 runs after 2026-01-01 in UTC with the
+/// source's (the results' together, for a split). Returns the results' warnings about AWS
+/// syntax that AWS doesn't document, the only ones the source can't have.
+fn check(s: &Schedule, to: Dialect, results: &[String]) -> Result<Vec<Warning>, Error> {
+    let failed = || {
+        Error::new(
+            "self_check",
+            "The conversion didn't reproduce the same run times, so no result was given.",
+        )
+        .hint("Please report this expression.")
+    };
+    let runs = |s: &Schedule| {
+        let n = runs::next(s, Some("UTC"), Some("2026-01-01T00:00:00Z"), 100)?;
+        Ok::<_, Error>(n.runs.into_iter().map(|r| r.time.timestamp()))
+    };
+    let want: Vec<_> = runs(s)?.collect();
+    let (mut got, mut warnings) = (vec![], vec![]);
+    for text in results {
+        let result = parse(text, Some(to)).map_err(|_| failed())?;
+        got.extend(runs(&result).map_err(|_| failed())?);
+        warnings.extend(
+            lint(&result)
+                .into_iter()
+                .filter(|w| w.code == "aws_undocumented"),
+        );
+    }
+    got.sort();
+    got.dedup();
+    got.truncate(100);
+    if got == want {
+        Ok(warnings)
+    } else {
+        Err(failed())
+    }
+}
+
 /// The schedule written in `to`: one expression, or two when Quartz or AWS must split cron's
 /// "day of month OR day of week" into separate triggers.
-pub fn convert(s: &Schedule, to: Dialect) -> Result<Vec<String>, Error> {
+fn rewrite(s: &Schedule, to: Dialect) -> Result<Vec<String>, Error> {
     let not = |reason: String| {
         Error::new(
             "not_convertible",
@@ -167,10 +234,57 @@ fn field(v: &[u16], kind: Kind, to: Dialect, star: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::expr::parse;
 
     fn to(text: &str, to: Dialect) -> Result<Vec<String>, (String, Option<String>)> {
-        convert(&parse(text, None).unwrap(), to).map_err(|e| (e.message, e.hint))
+        let c = convert(&parse(text, None).unwrap(), to).map_err(|e| (e.message, e.hint))?;
+        Ok(c.results)
+    }
+
+    fn warnings(text: &str, to: Dialect) -> Vec<String> {
+        let c = convert(&parse(text, None).unwrap(), to).unwrap();
+        c.warnings.into_iter().map(|w| w.message).collect()
+    }
+
+    #[test]
+    fn warns_about_splits_and_undocumented_aws_syntax() {
+        let split = "can't match day of month OR day of week in one expression, so this needs two";
+        assert_eq!(
+            warnings("0 0 1,15 * FRI", Quartz),
+            [format!("Quartz {split} triggers.")]
+        );
+        assert_eq!(
+            warnings("0 0 1,15 * FRI", Aws),
+            [format!("AWS cron {split} rules or schedules.")]
+        );
+        assert_eq!(
+            warnings("0 0 9 LW * ?", Aws),
+            ["AWS doesn't document LW; check it in the EventBridge console before relying on it."]
+        );
+        // The source's own warnings belong to explain, not to the conversion.
+        assert!(warnings("0 0 12 ? * MON#2", Aws).is_empty());
+        assert!(warnings("*/7 * * * *", Quartz).is_empty());
+    }
+
+    #[test]
+    fn refuses_a_result_that_runs_at_other_times() {
+        let s = parse("0 9 * * *", None).unwrap();
+        let fail = |result: &str| check(&s, Unix, &[result.into()]).unwrap_err();
+        for result in ["0 10 * * *", "0 9 * *", "0 9 30 2 *"] {
+            let e = fail(result);
+            assert_eq!(e.code, "self_check");
+            assert_eq!(e.exit_code(), 3);
+            assert_eq!(
+                e.message,
+                "The conversion didn't reproduce the same run times, so no result was given."
+            );
+            assert_eq!(e.hint.as_deref(), Some("Please report this expression."));
+        }
+        assert!(check(&s, Unix, &["0 9 * * 0-6".into()]).is_ok());
+        // A split passes when its results together match the source.
+        let or = parse("0 0 1,15 * FRI", None).unwrap();
+        let parts = ["0 0 0 1,15 * ?".into(), "0 0 0 ? * FRI".into()];
+        assert!(check(&or, Quartz, &parts).is_ok());
+        assert!(check(&or, Quartz, &parts[..1]).is_err());
     }
 
     #[test]

@@ -4,12 +4,13 @@ use jiff::Zoned;
 use jiff::civil::DateTime;
 use serde::{Serialize, Serializer};
 
+use crate::convert;
 use crate::describe::{FieldInfo, describe, fields};
 use crate::error::{Error, Warning};
 use crate::expr::parse;
 use crate::lint::lint;
 use crate::runs::{self, Dst, Run};
-use crate::schedule::Dialect;
+use crate::schedule::{Dialect, Schedule};
 
 /// The bundled IANA tzdata release, e.g. "2026f".
 pub const TZDATA: &str = match jiff_tzdb::VERSION {
@@ -38,6 +39,16 @@ pub struct Upcoming {
     pub runs: Vec<Run>,
     #[serde(serialize_with = "gap_skips")]
     pub skipped: Vec<DateTime>,
+    pub warnings: Vec<Warning>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Converted {
+    pub expression: String,
+    pub dialect: Dialect,
+    pub to: Dialect,
+    pub results: Vec<String>,
+    pub description: String,
     pub warnings: Vec<Warning>,
 }
 
@@ -81,12 +92,17 @@ fn gap_skips<S: Serializer>(skipped: &[DateTime], s: S) -> Result<S::Ok, S::Erro
     )
 }
 
-pub fn explain(expression: &str, dialect: Option<Dialect>) -> Result<Explained, Error> {
+/// The parsed schedule, refused if it never runs: no scheduler would run it either.
+fn runnable(expression: &str, dialect: Option<Dialect>) -> Result<Schedule, Error> {
     let s = parse(expression, dialect)?;
-    // A schedule that never runs is an error in every command.
     if !s.reboot {
         runs::next(&s, Some("UTC"), None, 1)?;
     }
+    Ok(s)
+}
+
+pub fn explain(expression: &str, dialect: Option<Dialect>) -> Result<Explained, Error> {
+    let s = runnable(expression, dialect)?;
     Ok(Explained {
         expression: expression.trim().into(),
         dialect: s.dialect,
@@ -117,6 +133,23 @@ pub fn next(
         runs: n.runs,
         skipped: n.skipped,
         warnings,
+    })
+}
+
+pub fn convert(
+    expression: &str,
+    dialect: Option<Dialect>,
+    to: Dialect,
+) -> Result<Converted, Error> {
+    let s = runnable(expression, dialect)?;
+    let c = convert::convert(&s, to)?;
+    Ok(Converted {
+        expression: expression.trim().into(),
+        dialect: s.dialect,
+        to,
+        results: c.results,
+        description: describe(&s),
+        warnings: c.warnings,
     })
 }
 
@@ -214,6 +247,24 @@ mod tests {
             serde_json::to_value(Failure { error: &error }).unwrap()["error"]["hint"],
             json!(null)
         );
+    }
+
+    #[test]
+    fn serializes_convert_like_the_documented_example() {
+        let c = convert(" 0 0 1,15 * FRI ", None, Dialect::Quartz).unwrap();
+        assert_eq!(
+            serde_json::to_value(&c).unwrap(),
+            json!({
+                "expression": "0 0 1,15 * FRI",
+                "dialect": "unix",
+                "to": "quartz",
+                "results": ["0 0 0 1,15 * ?", "0 0 0 ? * FRI"],
+                "description": "At 00:00, on day 1 and 15 of the month, or on Friday.",
+                "warnings": [{"code": "split", "message": "Quartz can't match day of month OR day of week in one expression, so this needs two triggers."}]
+            })
+        );
+        let never = convert("0 0 30 2 *", None, Dialect::Quartz).unwrap_err();
+        assert_eq!(never.code, "never_runs");
     }
 
     #[test]
