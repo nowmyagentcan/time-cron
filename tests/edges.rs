@@ -146,7 +146,6 @@ fn converting_to_unix_keeps_the_dst_behaviour() {
 }
 
 #[test]
-#[ignore = "known bug: runs are ordered only within a civil date"]
 fn keeps_runs_in_time_order_across_a_fold_that_spans_midnight() {
     // Goose Bay, 1988-10-30: clocks went back from 00:01 to 22:01 the previous evening.
     let tz = "America/Goose_Bay";

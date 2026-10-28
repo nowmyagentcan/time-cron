@@ -52,25 +52,33 @@ pub fn next(
     let mut warnings = vec![];
     let tz = zone(s, tz, &mut warnings)?;
     let from = start(from, &tz)?;
-    let mut runs = vec![];
+    let mut runs: Vec<Run> = vec![];
     let mut skipped = vec![];
-    for day in days(s, from.date()) {
+    // A fold across midnight can put a date's runs before the previous date's: start a day
+    // early, and stop once the next date can't hold an earlier run than the last one kept.
+    let mut days = days(s, from.date().yesterday().unwrap_or(from.date())).peekable();
+    while let Some(day) = days.next() {
         let mut today = vec![];
         for t in times(s) {
             resolve(s, &tz, day.to_datetime(t), &mut today, &mut skipped);
         }
-        // Only DST changes reorder a day; sorting would copy every run of the day.
+        // Only DST changes reorder runs; sorting would copy every run of the day.
         if !today.is_sorted_by_key(|r| r.time.timestamp()) {
             today.sort_by_key(|r| r.time.timestamp());
         }
-        let need = count - runs.len();
-        runs.extend(
-            today
-                .into_iter()
-                .filter(|r| r.time.timestamp() > from.timestamp())
-                .take(need),
-        );
-        if runs.len() == count {
+        let later = |r: &Run| r.time.timestamp() > from.timestamp();
+        runs.extend(today.into_iter().filter(later).take(count));
+        if !runs.is_sorted_by_key(|r| r.time.timestamp()) {
+            runs.sort_by_key(|r| r.time.timestamp());
+        }
+        runs.truncate(count);
+        let last = runs.last().map(|r| r.time.timestamp());
+        let done = runs.len() == count
+            && days.peek().is_none_or(|d| {
+                let midnight = tz.to_ambiguous_timestamp(d.to_datetime(Time::midnight()));
+                midnight.earlier().ok() > last
+            });
+        if done {
             break;
         }
     }
