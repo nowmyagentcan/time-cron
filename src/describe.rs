@@ -3,28 +3,12 @@
 use crate::schedule::Kind::{self, DayOfMonth, DayOfWeek, Hour, Minute, Month, Second, Year};
 use crate::schedule::{DayRule, DomSpecial, Dow, Schedule};
 
-const DAYS: [&str; 7] = [
-    "Sunday",
-    "Monday",
-    "Tuesday",
-    "Wednesday",
-    "Thursday",
-    "Friday",
-    "Saturday",
-];
+#[rustfmt::skip]
+const DAYS: [&str; 7] = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+#[rustfmt::skip]
 pub(crate) const MONTHS: [&str; 12] = [
-    "January",
-    "February",
-    "March",
-    "April",
-    "May",
-    "June",
-    "July",
-    "August",
-    "September",
-    "October",
-    "November",
-    "December",
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
 ];
 const NTH: [&str; 5] = ["first", "second", "third", "fourth", "fifth"];
 
@@ -102,11 +86,7 @@ pub(crate) fn meaning(s: &Schedule, kind: Kind) -> String {
     match kind {
         Second | Minute | Hour => steps(s, kind, &v).unwrap_or_else(|| numbers(&v)),
         DayOfMonth | DayOfWeek if s.field(kind).is_some_and(|f| f.text == "?") => {
-            let other = if kind == DayOfMonth {
-                DayOfWeek
-            } else {
-                DayOfMonth
-            };
+            let other = [DayOfWeek, DayOfMonth][(kind == DayOfWeek) as usize];
             format!("not used: the {} field decides", other.words())
         }
         DayOfMonth => bare(dom(s), "any day"),
