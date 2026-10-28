@@ -35,7 +35,12 @@ pub fn serve(port: u16, open: bool) -> Result<(), Error> {
     })?;
     let port = listener.local_addr().map_or(port, |a| a.port());
     let url = format!("http://127.0.0.1:{port}");
-    println!("Open {url}  (Ctrl+C to stop)");
+    // With stdout closed nobody learns the address, so end quietly as other commands do.
+    match writeln!(io::stdout(), "Open {url}  (Ctrl+C to stop)") {
+        Err(e) if e.kind() == io::ErrorKind::BrokenPipe => return Ok(()),
+        Err(e) => return Err(Error::new("io", format!("Can't start the page: {e}."))),
+        Ok(()) => {}
+    }
     if open {
         browse(url);
     }

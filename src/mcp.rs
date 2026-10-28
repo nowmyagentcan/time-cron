@@ -80,6 +80,15 @@ pub fn serve() -> Result<(), Error> {
             Ok(service) => service.waiting().await.map(drop).map_err(|e| io(&e)),
             // stdin closed before the handshake ended: the client left, which is no failure.
             Err(ServerInitializeError::ConnectionClosed(_)) => Ok(()),
+            // stdout closed before the answer went out: the client left too.
+            Err(ServerInitializeError::TransportError { error, .. })
+                if error
+                    .error
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|e| e.kind() == std::io::ErrorKind::BrokenPipe) =>
+            {
+                Ok(())
+            }
             Err(e) => Err(io(&e)),
         }
     })

@@ -650,7 +650,6 @@ fn ends_quietly_when_stdout_closes() {
 }
 
 #[test]
-#[ignore = "known bug: ui panics and mcp exits 3 when stdout is closed"]
 fn servers_end_quietly_when_stdout_closes() {
     for args in [&["ui", "--no-open"][..], &["mcp"]] {
         let mut child = time_cron(args)
