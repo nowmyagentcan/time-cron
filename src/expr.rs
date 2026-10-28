@@ -381,12 +381,8 @@ impl Parser {
             _ => &[],
         };
         if let Some(i) = names.iter().position(|n| *n == up) {
-            let first = if kind == DayOfWeek && self.0 == Unix {
-                0
-            } else {
-                1
-            };
-            return Ok(i as u16 + first);
+            // Unix numbers Sunday 0; months and Quartz days start at 1.
+            return Ok(i as u16 + u16::from(kind != DayOfWeek || self.0 != Unix));
         }
         if self.0 == Unix
             && up
@@ -709,6 +705,7 @@ mod tests {
     }
 
     #[test]
+    #[rustfmt::skip]
     fn every_parse_error_has_its_exact_message_and_hint() {
         const UNIX_SYNTAX: &str = "Use numbers, *, ranges (1-5), lists (1,3) and steps (*/15).";
         const QUARTZ_SYNTAX: &str = "Use numbers, *, ranges (1-5), lists (1,3) and steps (*/15), and ? L W # where the field allows them.";
@@ -717,364 +714,64 @@ mod tests {
         const QUESTION: &str = "Example: 0 0 9 ? * MON-FRI";
         const UNIX_ONLY: &str = "Pass --dialect quartz or aws, or list the days.";
         const FIXED: &str = "Replace it with a fixed value.";
+        const COUNT: &str = "Separate fields with spaces and quote the expression.";
+        const TZ: &str = "Example: time-cron next \"0 9 * * *\" --tz Europe/Berlin";
         let long = format!("0 9 * * {}1", "1,".repeat(600));
         type Case<'a> = (&'a str, Option<Dialect>, &'a str, &'a str, Option<&'a str>);
         let cases: &[Case] = &[
-            (
-                " \r\n",
-                None,
-                "empty",
-                "No cron expression given.",
-                Some("Example: time-cron next \"0 9 * * 1-5\""),
-            ),
-            (
-                &long,
-                None,
-                "too_long",
-                "The expression is longer than 1024 characters.",
-                None,
-            ),
-            (
-                "0 9 * *\n1-5",
-                None,
-                "multiline",
-                "The expression must be on one line.",
-                None,
-            ),
-            (
-                "0 9 * *",
-                None,
-                "field_count",
-                "Expected 5 fields (Unix), 6 or 7 (Quartz) or cron(...) with 6 (AWS); got 4.",
-                Some("Separate fields with spaces and quote the expression."),
-            ),
-            (
-                "cron(0 9 * * ?)",
-                None,
-                "field_count",
-                "Expected 5 fields (Unix), 6 or 7 (Quartz) or cron(...) with 6 (AWS); got 5.",
-                Some("Separate fields with spaces and quote the expression."),
-            ),
-            (
-                "0 9 * * 1-5",
-                Some(Aws),
-                "dialect_field_count",
-                "AWS cron has 6 fields; got 5.",
-                Some("Leave out --dialect to detect it."),
-            ),
-            (
-                "0 9 * * 1-5",
-                Some(Quartz),
-                "dialect_field_count",
-                "Quartz has 6 or 7 fields; got 5.",
-                Some("Leave out --dialect to detect it."),
-            ),
-            (
-                "0 0 12 * * *",
-                None,
-                "ambiguous_dialect",
-                "6 fields without '?' could be Quartz (seconds first) or AWS (year last).",
-                Some(
-                    "Put ? in day of month or day of week, or pass --dialect quartz or --dialect aws.",
-                ),
-            ),
-            (
-                "rate(5 minutes)",
-                None,
-                "rate_expression",
-                "rate() expressions aren't cron.",
-                Some("Use cron(...) or a cron expression."),
-            ),
-            (
-                "CRON_TZ=UTC 0 9 * * *",
-                None,
-                "cron_tz_prefix",
-                "Put the time zone in --tz instead of CRON_TZ=.",
-                Some("Example: time-cron next \"0 9 * * *\" --tz Europe/Berlin"),
-            ),
-            (
-                "TZ=UTC 0 9 * * *",
-                None,
-                "cron_tz_prefix",
-                "Put the time zone in --tz instead of TZ=.",
-                Some("Example: time-cron next \"0 9 * * *\" --tz Europe/Berlin"),
-            ),
-            (
-                "@fortnightly",
-                None,
-                "unknown_nickname",
-                "Unknown nickname '@fortnightly'.",
-                Some(
-                    "Use @yearly, @annually, @monthly, @weekly, @daily, @midnight, @hourly or @reboot.",
-                ),
-            ),
-            (
-                "@daily",
-                Some(Quartz),
-                "nickname_dialect",
-                "Nicknames like @daily are Unix cron only.",
-                Some("Drop --dialect, or write the fields out."),
-            ),
-            (
-                "60 * * * *",
-                None,
-                "out_of_range",
-                "Minute value 60 is out of range 0-59.",
-                None,
-            ),
-            (
-                "0 0 * * 8",
-                None,
-                "out_of_range",
-                "Day of week value 8 is out of range 0-7.",
-                None,
-            ),
-            (
-                "0 0 12 ? * 0",
-                None,
-                "out_of_range",
-                "Day of week value 0 is out of range 1-7.",
-                Some(SUNDAY),
-            ),
-            (
-                "cron(0 12 ? * 1-8 *)",
-                None,
-                "out_of_range",
-                "Day of week value 8 is out of range 1-7.",
-                Some(SUNDAY),
-            ),
-            (
-                "0 0 32 * * ?",
-                None,
-                "out_of_range",
-                "Hour value 32 is out of range 0-23.",
-                None,
-            ),
-            (
-                "0 0 1 FOO *",
-                None,
-                "unknown_name",
-                "Unknown month name 'FOO'.",
-                Some(NAMES),
-            ),
-            (
-                "0 0 * * Monday",
-                None,
-                "unknown_name",
-                "Unknown day name 'Monday'.",
-                Some(NAMES),
-            ),
-            (
-                "0 9-x * * *",
-                None,
-                "bad_syntax",
-                "Can't read '9-x' in the hour field.",
-                Some(UNIX_SYNTAX),
-            ),
-            (
-                "0 0 MON * *",
-                None,
-                "bad_syntax",
-                "Can't read 'MON' in the day of month field.",
-                Some(UNIX_SYNTAX),
-            ),
-            (
-                "0 0 12 ? * MON-FRI/x",
-                None,
-                "bad_syntax",
-                "Can't read 'MON-FRI/x' in the day of week field.",
-                Some(QUARTZ_SYNTAX),
-            ),
-            (
-                "0 0 12 1-5L * ?",
-                None,
-                "bad_syntax",
-                "Can't read '1-5L' in the day of month field.",
-                Some(QUARTZ_SYNTAX),
-            ),
-            (
-                "*/0 * * * *",
-                None,
-                "zero_step",
-                "A step must be 1 or more.",
-                None,
-            ),
-            (
-                "0 0/60 * * * ?",
-                None,
-                "step_too_large",
-                "Step /60 is too large for the minute field (Quartz needs less than 60).",
-                None,
-            ),
-            (
-                "cron(0 12 1/31 * ? *)",
-                None,
-                "step_too_large",
-                "Step /31 is too large for the day of month field (Quartz needs less than 31).",
-                None,
-            ),
-            (
-                "5/15 * * * *",
-                None,
-                "lone_step",
-                "Unix cron doesn't allow '5/15'.",
-                Some("Write 5-59/15 or */15."),
-            ),
-            (
-                "0 17-9 * * *",
-                None,
-                "backward_range",
-                "The range 17-9 goes backwards.",
-                Some("Write the smaller value first, or split it: 17-23,0-9."),
-            ),
-            (
-                "0 0 * * FRI-MON",
-                None,
-                "backward_range",
-                "The range FRI-MON goes backwards.",
-                Some("Write the smaller value first, or split it: FRI-6,0-MON."),
-            ),
-            (
-                "0 0 12 1 1 ? 2030-2027",
-                None,
-                "backward_range",
-                "The range 2030-2027 goes backwards.",
-                Some("Write the smaller value first."),
-            ),
-            (
-                "0 0 L * *",
-                None,
-                "unix_special",
-                "'L' isn't Unix cron syntax.",
-                Some(UNIX_ONLY),
-            ),
-            (
-                "0 0 15w * *",
-                None,
-                "unix_special",
-                "'W' isn't Unix cron syntax.",
-                Some(UNIX_ONLY),
-            ),
-            (
-                "0 0 ? * MON",
-                None,
-                "unix_special",
-                "'?' isn't Unix cron syntax.",
-                Some(UNIX_ONLY),
-            ),
-            (
-                "0 0 * * MON#2",
-                None,
-                "unix_special",
-                "'#' isn't Unix cron syntax.",
-                Some(UNIX_ONLY),
-            ),
-            (
-                "0~30 * * * *",
-                None,
-                "random_value",
-                "'~' picks a random time when cron loads the crontab, so the run times can't be predicted.",
-                Some(FIXED),
-            ),
-            (
-                "H 9 * * *",
-                None,
-                "jenkins_hash",
-                "'H' is Jenkins syntax, which time-cron doesn't read.",
-                Some(FIXED),
-            ),
-            (
-                "0 0 12 * * MON",
-                Some(Quartz),
-                "question_mark",
-                "Quartz needs '?' in exactly one of day of month and day of week.",
-                Some(QUESTION),
-            ),
-            (
-                "0 0 12 ? * ?",
-                None,
-                "question_mark",
-                "Quartz needs '?' in exactly one of day of month and day of week.",
-                Some(QUESTION),
-            ),
-            (
-                "cron(0 12 * * MON *)",
-                None,
-                "question_mark",
-                "AWS cron needs '?' in exactly one of day of month and day of week.",
-                Some("Example: cron(0 9 ? * MON-FRI *)"),
-            ),
-            (
-                "? 0 12 ? * MON",
-                None,
-                "question_mark",
-                "'?' is only allowed in day of month or day of week.",
-                Some(QUESTION),
-            ),
-            (
-                "0 0 12 ? * 2,6L",
-                None,
-                "l_in_list",
-                "Quartz doesn't allow 'L' in a list of days of the week.",
-                None,
-            ),
-            (
-                "0 0 12 ? * MON#2,FRI#1",
-                None,
-                "multiple_nth",
-                "Only one '#' day is allowed, on its own.",
-                None,
-            ),
-            (
-                "0 0 12 ? * 2#1#2",
-                None,
-                "multiple_nth",
-                "Only one '#' day is allowed, on its own.",
-                None,
-            ),
-            (
-                "0 0 12 1-5W * ?",
-                None,
-                "w_needs_day",
-                "'W' needs a single day of the month, like 15W.",
-                None,
-            ),
-            (
-                "0 0 12 L-31 * ?",
-                None,
-                "l_offset",
-                "L-31: the offset can be at most 30.",
-                None,
-            ),
-            (
-                "0 0 12 ? * MON#6",
-                None,
-                "nth_range",
-                "In MON#6, 6 must be 1-5.",
-                None,
-            ),
-            (
-                "cron(0 12 ? * 2/2 *)",
-                None,
-                "aws_dow_step",
-                "AWS cron doesn't allow '/' in day of week.",
-                Some("List the days instead, e.g. MON,WED,FRI."),
-            ),
-            (
-                "0 0 12 1 1 ? 2200",
-                None,
-                "year_range",
-                "Year 2200 is out of range 1970-2199.",
-                None,
-            ),
+            (" \r\n", None, "empty", "No cron expression given.", Some("Example: time-cron next \"0 9 * * 1-5\"")),
+            (&long, None, "too_long", "The expression is longer than 1024 characters.", None),
+            ("0 9 * *\n1-5", None, "multiline", "The expression must be on one line.", None),
+            ("0 9 * *", None, "field_count", "Expected 5 fields (Unix), 6 or 7 (Quartz) or cron(...) with 6 (AWS); got 4.", Some(COUNT)),
+            ("cron(0 9 * * ?)", None, "field_count", "Expected 5 fields (Unix), 6 or 7 (Quartz) or cron(...) with 6 (AWS); got 5.", Some(COUNT)),
+            ("0 9 * * 1-5", Some(Aws), "dialect_field_count", "AWS cron has 6 fields; got 5.", Some("Leave out --dialect to detect it.")),
+            ("0 9 * * 1-5", Some(Quartz), "dialect_field_count", "Quartz has 6 or 7 fields; got 5.", Some("Leave out --dialect to detect it.")),
+            ("0 0 12 * * *", None, "ambiguous_dialect", "6 fields without '?' could be Quartz (seconds first) or AWS (year last).", Some("Put ? in day of month or day of week, or pass --dialect quartz or --dialect aws.")),
+            ("rate(5 minutes)", None, "rate_expression", "rate() expressions aren't cron.", Some("Use cron(...) or a cron expression.")),
+            ("CRON_TZ=UTC 0 9 * * *", None, "cron_tz_prefix", "Put the time zone in --tz instead of CRON_TZ=.", Some(TZ)),
+            ("TZ=UTC 0 9 * * *", None, "cron_tz_prefix", "Put the time zone in --tz instead of TZ=.", Some(TZ)),
+            ("@fortnightly", None, "unknown_nickname", "Unknown nickname '@fortnightly'.", Some("Use @yearly, @annually, @monthly, @weekly, @daily, @midnight, @hourly or @reboot.")),
+            ("@daily", Some(Quartz), "nickname_dialect", "Nicknames like @daily are Unix cron only.", Some("Drop --dialect, or write the fields out.")),
+            ("60 * * * *", None, "out_of_range", "Minute value 60 is out of range 0-59.", None),
+            ("0 0 * * 8", None, "out_of_range", "Day of week value 8 is out of range 0-7.", None),
+            ("0 0 12 ? * 0", None, "out_of_range", "Day of week value 0 is out of range 1-7.", Some(SUNDAY)),
+            ("cron(0 12 ? * 1-8 *)", None, "out_of_range", "Day of week value 8 is out of range 1-7.", Some(SUNDAY)),
+            ("0 0 32 * * ?", None, "out_of_range", "Hour value 32 is out of range 0-23.", None),
+            ("0 0 1 FOO *", None, "unknown_name", "Unknown month name 'FOO'.", Some(NAMES)),
+            ("0 0 * * Monday", None, "unknown_name", "Unknown day name 'Monday'.", Some(NAMES)),
+            ("0 9-x * * *", None, "bad_syntax", "Can't read '9-x' in the hour field.", Some(UNIX_SYNTAX)),
+            ("0 0 MON * *", None, "bad_syntax", "Can't read 'MON' in the day of month field.", Some(UNIX_SYNTAX)),
+            ("0 0 12 ? * MON-FRI/x", None, "bad_syntax", "Can't read 'MON-FRI/x' in the day of week field.", Some(QUARTZ_SYNTAX)),
+            ("0 0 12 1-5L * ?", None, "bad_syntax", "Can't read '1-5L' in the day of month field.", Some(QUARTZ_SYNTAX)),
+            ("*/0 * * * *", None, "zero_step", "A step must be 1 or more.", None),
+            ("0 0/60 * * * ?", None, "step_too_large", "Step /60 is too large for the minute field (Quartz needs less than 60).", None),
+            ("cron(0 12 1/31 * ? *)", None, "step_too_large", "Step /31 is too large for the day of month field (Quartz needs less than 31).", None),
+            ("5/15 * * * *", None, "lone_step", "Unix cron doesn't allow '5/15'.", Some("Write 5-59/15 or */15.")),
+            ("0 17-9 * * *", None, "backward_range", "The range 17-9 goes backwards.", Some("Write the smaller value first, or split it: 17-23,0-9.")),
+            ("0 0 * * FRI-MON", None, "backward_range", "The range FRI-MON goes backwards.", Some("Write the smaller value first, or split it: FRI-6,0-MON.")),
+            ("0 0 12 1 1 ? 2030-2027", None, "backward_range", "The range 2030-2027 goes backwards.", Some("Write the smaller value first.")),
+            ("0 0 L * *", None, "unix_special", "'L' isn't Unix cron syntax.", Some(UNIX_ONLY)),
+            ("0 0 15w * *", None, "unix_special", "'W' isn't Unix cron syntax.", Some(UNIX_ONLY)),
+            ("0 0 ? * MON", None, "unix_special", "'?' isn't Unix cron syntax.", Some(UNIX_ONLY)),
+            ("0 0 * * MON#2", None, "unix_special", "'#' isn't Unix cron syntax.", Some(UNIX_ONLY)),
+            ("0~30 * * * *", None, "random_value", "'~' picks a random time when cron loads the crontab, so the run times can't be predicted.", Some(FIXED)),
+            ("H 9 * * *", None, "jenkins_hash", "'H' is Jenkins syntax, which time-cron doesn't read.", Some(FIXED)),
+            ("0 0 12 * * MON", Some(Quartz), "question_mark", "Quartz needs '?' in exactly one of day of month and day of week.", Some(QUESTION)),
+            ("0 0 12 ? * ?", None, "question_mark", "Quartz needs '?' in exactly one of day of month and day of week.", Some(QUESTION)),
+            ("cron(0 12 * * MON *)", None, "question_mark", "AWS cron needs '?' in exactly one of day of month and day of week.", Some("Example: cron(0 9 ? * MON-FRI *)")),
+            ("? 0 12 ? * MON", None, "question_mark", "'?' is only allowed in day of month or day of week.", Some(QUESTION)),
+            ("0 0 12 ? * 2,6L", None, "l_in_list", "Quartz doesn't allow 'L' in a list of days of the week.", None),
+            ("0 0 12 ? * MON#2,FRI#1", None, "multiple_nth", "Only one '#' day is allowed, on its own.", None),
+            ("0 0 12 ? * 2#1#2", None, "multiple_nth", "Only one '#' day is allowed, on its own.", None),
+            ("0 0 12 1-5W * ?", None, "w_needs_day", "'W' needs a single day of the month, like 15W.", None),
+            ("0 0 12 L-31 * ?", None, "l_offset", "L-31: the offset can be at most 30.", None),
+            ("0 0 12 ? * MON#6", None, "nth_range", "In MON#6, 6 must be 1-5.", None),
+            ("cron(0 12 ? * 2/2 *)", None, "aws_dow_step", "AWS cron doesn't allow '/' in day of week.", Some("List the days instead, e.g. MON,WED,FRI.")),
+            ("0 0 12 1 1 ? 2200", None, "year_range", "Year 2200 is out of range 1970-2199.", None),
         ];
         for &(text, dialect, code, message, hint) in cases {
             let e = parse(text, dialect).unwrap_err();
-            assert_eq!(
-                (e.code, &e.message[..], e.hint.as_deref()),
-                (code, message, hint),
-                "{text}"
-            );
+            assert_eq!((e.code, &e.message[..], e.hint.as_deref()), (code, message, hint), "{text}");
         }
         let codes: std::collections::BTreeSet<_> = cases.iter().map(|c| c.2).collect();
         assert_eq!(codes.len(), 28);
