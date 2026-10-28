@@ -166,12 +166,13 @@ async function api(body) {
 
 const day = date => ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][new Date(date + "T00:00Z").getUTCDay()];
 const clock = (s, secs) => s.slice(11, secs ? 19 : 16);
+const when = (s, secs) => `${day(s.slice(0, 10))} ${s.slice(0, 10)} ${clock(s, secs)}`;
 const note = (r, secs) => r.dst === "moved" ? `moved from ${clock(r.scheduled, secs)}` : r.dst ? `${r.dst} ${clock(r.time, secs)} of two` : "";
 
 function asText(n, c, secs) {
   const lines = [n.description, `${n.timezone} · tzdata ${n.tzdata} · ${RULES[n.dialect]}`];
-  for (const r of n.runs) lines.push(`  ${day(r.time.slice(0, 10))} ${r.time.slice(0, 10)} ${clock(r.time, secs)} ${r.time.slice(19)}  ${note(r, secs)}`.trimEnd());
-  for (const s of n.skipped) lines.push(`  skipped ${day(s.scheduled.slice(0, 10))} ${s.scheduled.slice(0, 10)} ${clock(s.scheduled, secs)} (DST gap)`);
+  for (const r of n.runs) lines.push(`  ${when(r.time, secs)} ${r.time.slice(19)}  ${note(r, secs)}`.trimEnd());
+  for (const s of n.skipped) lines.push(`  skipped ${when(s.scheduled, secs)} (DST gap)`);
   for (const w of n.warnings.concat(c?.warnings ?? [])) lines.push(`! ${w.message}`);
   if (c?.results) for (const x of c.results) lines.push(`${NAMES[c.to]}: ${x}`);
   return lines.join("\n") + "\n";
@@ -182,7 +183,7 @@ const failure = e => `<p class="err">${FAIL}<span>${esc(e.message)}</span></p>` 
 function done(n, c) {
   const secs = n.runs.some(r => r.time.slice(17, 19) !== "00");
   const warnings = n.warnings.concat(c?.warnings ?? []);
-  const rows = n.runs.map(r => `<tr><td>${day(r.time.slice(0, 10))} ${r.time.slice(0, 10)} ${clock(r.time, secs)} <span class="dim">${r.time.slice(19)}</span></td>`
+  const rows = n.runs.map(r => `<tr><td>${when(r.time, secs)} <span class="dim">${r.time.slice(19)}</span></td>`
     + `<td class="dim">${r.utc.slice(0, 10)} ${clock(r.utc, secs)}</td><td class="note">${note(r, secs)}</td></tr>`).join("");
   out.dataset.text = asText(n, c, secs);
   out.innerHTML = `<div class="head"><p class="desc">${esc(n.description)}</p>`
