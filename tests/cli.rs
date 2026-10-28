@@ -131,6 +131,19 @@ fn assert_shape(v: &Value) {
                 assert!(s["scheduled"].is_string());
             }
         }
+        [
+            "description",
+            "dialect",
+            "expression",
+            "results",
+            "to",
+            "warnings",
+        ] => {
+            assert!(strings(v, &["description", "dialect", "expression", "to"]));
+            assert!(warnings(v));
+            let results = v["results"].as_array().unwrap();
+            assert!((1..=2).contains(&results.len()) && results.iter().all(Value::is_string));
+        }
         other => panic!("unexpected keys {other:?}"),
     }
 }
@@ -160,6 +173,7 @@ fn shows_examples_in_help() {
         &["-h"],
         &["next", "--help"],
         &["explain", "--help"],
+        &["convert", "--help"],
     ] {
         let (code, out, _) = run(args);
         assert_eq!(code, 0);
@@ -168,6 +182,7 @@ fn shows_examples_in_help() {
             "{out}"
         );
         assert!(out.contains("  time-cron next \"0 0 12 ? * MON#2\" --json\n"));
+        assert!(out.contains("  time-cron convert \"*/15 9-17 * * 1-5\" --to quartz"));
         assert!(!out.contains('\x1b'));
     }
     let (_, out, _) = run(&["--help"]);
@@ -414,6 +429,64 @@ fn matches_every_description_golden() {
 
 #[test]
 #[rustfmt::skip]
+fn matches_every_conversion_golden() {
+    // Each result has passed the binary's own check: its first 100 UTC runs after
+    // 2026-01-01 equal the source's.
+    let cases: &[(&str, &str, &[&str], &[&str])] = &[
+        ("0 9 * * 1-5", "quartz", &["0 0 9 ? * MON-FRI"], &[]),
+        ("0 9 * * 1-5", "aws", &["cron(0 9 ? * MON-FRI *)"], &[]),
+        ("*/15 9-17 * * 1-5", "quartz", &["0 0/15 9-17 ? * MON-FRI"], &[]),
+        ("*/15 9-17 * * 1-5", "aws", &["cron(0/15 9-17 ? * MON-FRI *)"], &[]),
+        ("0 0 * * 0", "quartz", &["0 0 0 ? * SUN"], &[]),
+        ("@daily", "quartz", &["0 0 0 * * ?"], &[]),
+        ("@daily", "unix", &["0 0 * * *"], &[]),
+        ("0 0 1,15 * FRI", "quartz", &["0 0 0 1,15 * ?", "0 0 0 ? * FRI"], &["split"]),
+        ("0 0 1,15 * FRI", "aws", &["cron(0 0 1,15 * ? *)", "cron(0 0 ? * FRI *)"], &["split"]),
+        ("0 30 9 ? * 2-6", "unix", &["30 9 * * 1-5"], &[]),
+        ("cron(0 18 ? * MON-FRI *)", "unix", &["0 18 * * 1-5"], &[]),
+        ("cron(0 18 ? * MON-FRI *)", "quartz", &["0 0 18 ? * MON-FRI"], &[]),
+        ("0 0 12 1 1 ? 2030", "aws", &["cron(0 12 1 1 ? 2030)"], &[]),
+        ("0 0 12 ? * MON#2", "aws", &["cron(0 12 ? * 2#2 *)"], &[]),
+        ("0 0 9 LW * ?", "aws", &["cron(0 9 LW * ? *)"], &["aws_undocumented"]),
+    ];
+    for &(expr, to, results, warnings) in cases {
+        let (code, v) = json(&["convert", expr, "--to", to]);
+        assert_eq!((code, &v["results"], codes(&v)), (0, &json!(results), warnings.to_vec()), "{expr} to {to}");
+        assert_eq!((&v["expression"], &v["to"]), (&json!(expr), &json!(to)));
+    }
+    let (_, v) = json(&["convert", "0 0 1,15 * FRI", "--to", "aws"]);
+    assert_eq!(v["warnings"][0]["message"], "AWS cron can't match day of month OR day of week in one expression, so this needs two rules or schedules.");
+}
+
+#[test]
+fn prints_only_the_converted_expressions_on_stdout() {
+    let (code, out, err) = run(&["convert", "0 0 1,15 * FRI", "--to", "quartz"]);
+    assert_eq!((code, out.as_str()), (0, "0 0 0 1,15 * ?\n0 0 0 ? * FRI\n"));
+    assert_eq!(
+        err,
+        "At 00:00, on day 1 and 15 of the month, or on Friday.
+! Quartz can't match day of month OR day of week in one expression, so this needs two triggers.
+"
+    );
+    // The source dialect can be named, and the words may come unquoted.
+    let (code, out, _) = run(&[
+        "convert",
+        "0",
+        "0",
+        "18",
+        "?",
+        "*",
+        "MON-FRI",
+        "--dialect",
+        "quartz",
+        "--to",
+        "aws",
+    ]);
+    assert_eq!((code, out.as_str()), (0, "cron(0 18 ? * MON-FRI *)\n"));
+}
+
+#[test]
+#[rustfmt::skip]
 fn reports_every_error_with_its_message_and_hint() {
     const TZ: &str = "Example: time-cron next \"0 9 * * *\" --tz Europe/Berlin";
     const FIXED: &str = "Replace it with a fixed value.";
@@ -460,6 +533,13 @@ fn reports_every_error_with_its_message_and_hint() {
         (&["next", "0 9 * * *", "--tz", "Mars/Olympus"], "unknown_tz", "Unknown time zone 'Mars/Olympus'.", Some("Use an IANA name such as America/New_York, Europe/Berlin or UTC.")),
         (&["next", "0 9 * * *", "--from", "tomorrow"], "bad_from", "Can't read the start time 'tomorrow'.", Some("Use 2026-11-01, 2026-11-01T09:00 (in --tz) or 2026-11-01T09:00:00Z.")),
         (&["next", "0 9 * * *", "--from", "2200-01-01"], "from_range", "The start time must be between 1970 and 2199.", None),
+        (&["convert", "0 9 */2 * MON", "--to", "quartz"], "not_convertible", "Quartz can't express this: it needs both a day of month and a day of week to match, and Quartz and AWS can only use one.", Some("Use one day field and check the other inside the job.")),
+        (&["convert", "0 0 12 ? * MON#2", "--to", "unix"], "not_convertible", "Unix cron can't express this: Unix cron has no L, W or #.", None),
+        (&["convert", "15 0 9 * * ?", "--to", "unix"], "not_convertible", "Unix cron can't express this: Unix cron has no seconds field (this runs at second 15).", None),
+        (&["convert", "15 0 9 * * ?", "--to", "aws"], "not_convertible", "AWS cron can't express this: AWS cron has no seconds field.", None),
+        (&["convert", "0 0 12 1 1 ? 2030", "--to", "unix"], "not_convertible", "Unix cron can't express this: Unix cron has no year field.", None),
+        (&["convert", "@reboot", "--to", "quartz"], "not_convertible", "Quartz can't express this: @reboot has no schedule.", None),
+        (&["convert", "0 0 30 2 *", "--to", "aws"], "never_runs", "This schedule never runs: day 30 doesn't occur in February.", Some("Pick a day that exists in every chosen month, or use L in Quartz or AWS.")),
     ];
     for &(args, code, message, hint) in cases {
         let (exit, v) = json(args);
@@ -482,6 +562,8 @@ fn turns_away_bad_usage_with_exit_2() {
         &["next", "0 9 * * *", "--tz"],
         &["explain", "0 9 * * *", "--tz", UTC],
         &["0 9 * * *", "--frobnicate"],
+        &["convert", "0 9 * * *"],
+        &["convert", "0 9 * * *", "--to", "auto"],
     ] {
         let (code, out, err) = run(args);
         assert_eq!((code, out.as_str()), (2, ""), "{args:?}");
