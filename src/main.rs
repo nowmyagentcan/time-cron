@@ -99,7 +99,7 @@ fn main() -> ExitCode {
     if std::env::args_os().len() == 1 {
         let e =
             Error::new("usage", "No expression given.").hint("Try: time-cron next \"0 9 * * 1-5\"");
-        eprint!("{}", text::error(&e));
+        fail(&e);
         return ExitCode::from(2);
     }
     let cli = Cli::parse();
@@ -123,18 +123,15 @@ fn main() -> ExitCode {
             if common.json {
                 (json(&report::Failure { error: &error }), error.exit_code())
             } else {
-                eprint!("{}", text::error(&error));
+                fail(&error);
                 (String::new(), error.exit_code())
             }
         }
     };
-    match std::io::stdout().lock().write_all(out.as_bytes()) {
+    match anstream::stdout().lock().write_all(out.as_bytes()) {
         Ok(()) => ExitCode::from(code),
         Err(e) => {
-            eprint!(
-                "{}",
-                text::error(&Error::new("io", format!("Can't write output: {e}.")))
-            );
+            fail(&Error::new("io", format!("Can't write output: {e}.")));
             ExitCode::from(3)
         }
     }
@@ -154,11 +151,28 @@ fn next(n: &NextArgs) -> Result<String, Error> {
 
 /// The answer as `--json` or as text.
 fn show<T: Serialize>(c: &Common, answer: &T, text: fn(&T) -> String) -> String {
-    if c.json { json(answer) } else { text(answer) }
+    if c.json {
+        json(answer)
+    } else {
+        people(text(answer))
+    }
 }
 
 fn json(value: &impl Serialize) -> String {
     serde_json::to_string(value).expect("answers are plain data") + "\n"
+}
+
+/// Text for a person, in ASCII when the console can't show Unicode.
+fn people(text: String) -> String {
+    if text::unicode() {
+        text
+    } else {
+        text::ascii(&text)
+    }
+}
+
+fn fail(e: &Error) {
+    anstream::eprint!("{}", people(text::error(e)));
 }
 
 fn dialect(c: &Common) -> Option<Dialect> {

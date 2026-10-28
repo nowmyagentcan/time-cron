@@ -342,6 +342,7 @@ dependencies = [
 name = "time-cron"
 version = "0.1.0"
 dependencies = [
+ "anstream",
  "clap",
  "jiff",
  "jiff-tzdb",

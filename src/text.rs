@@ -1,4 +1,5 @@
-//! Text for people: each answer as one string of plain lines.
+//! Text for people: each answer as one string of lines. Styles are always written as ANSI
+//! codes; the output stream drops them unless it is a colour terminal and NO_COLOR is unset.
 
 use std::fmt::Write;
 
@@ -7,11 +8,22 @@ use crate::report::{Explained, Upcoming};
 use crate::runs::Dst;
 use crate::schedule::Dialect;
 
+const BOLD: &str = "\x1b[1m";
+const DIM: &str = "\x1b[2m";
+const RED: &str = "\x1b[31m";
+const YELLOW: &str = "\x1b[33m";
+const RESET: &str = "\x1b[0m";
+
 pub fn explained(e: &Explained) -> String {
-    let mut out = format!("{}\nDialect: {}", e.description, e.dialect.name());
+    let mut out = format!(
+        "{BOLD}{}{RESET}\n{DIM}Dialect: {}",
+        e.description,
+        e.dialect.name()
+    );
     if !e.fields.is_empty() {
         let _ = write!(out, " ({} fields)", e.fields.len());
     }
+    out += RESET;
     out.push('\n');
     let names: Vec<String> = e.fields.iter().map(|f| f.name.replace('_', " ")).collect();
     let name_width = names.iter().map(String::len).max().unwrap_or(0) + 2;
@@ -33,7 +45,7 @@ pub fn upcoming(u: &Upcoming) -> String {
         Dialect::Aws => "EventBridge",
     };
     let mut out = format!(
-        "{}\n{} · tzdata {} · {rules} rules\n",
+        "{BOLD}{}{RESET}\n{DIM}{} · tzdata {} · {rules} rules{RESET}\n",
         u.description, u.timezone, u.tzdata
     );
     let seconds =
@@ -48,12 +60,13 @@ pub fn upcoming(u: &Upcoming) -> String {
             _ => String::new(),
         };
         let day = r.time.strftime("%a %Y-%m-%d");
-        let _ = writeln!(out, "  {day} {wall} {}{note}", r.time.strftime("%:z"));
+        let offset = r.time.strftime("%:z");
+        let _ = writeln!(out, "  {day} {wall} {DIM}{offset}{RESET}{note}");
     }
     for at in &u.skipped {
         let _ = writeln!(
             out,
-            "  skipped {} {} (DST gap)",
+            "  {DIM}skipped {} {} (DST gap){RESET}",
             at.strftime("%a %Y-%m-%d"),
             at.strftime(clock)
         );
@@ -63,17 +76,37 @@ pub fn upcoming(u: &Upcoming) -> String {
 
 /// What failed, then how to fix it.
 pub fn error(e: &Error) -> String {
-    match &e.hint {
-        Some(hint) => format!("✗ {}\n  {hint}\n", e.message),
-        None => format!("✗ {}\n", e.message),
+    let mut out = format!("{RED}✗{RESET} {}\n", e.message);
+    if let Some(hint) = &e.hint {
+        let _ = writeln!(out, "  {hint}");
     }
+    out
 }
 
 fn warnings(warnings: &[Warning]) -> String {
     warnings
         .iter()
-        .map(|w| format!("! {}\n", w.message))
+        .map(|w| format!("{YELLOW}!{RESET} {}\n", w.message))
         .collect()
+}
+
+/// The text with plain ASCII in place of the marks a console without UTF-8 can't show.
+pub fn ascii(text: &str) -> String {
+    text.replace('✗', "x").replace('·', "-").replace('…', "...")
+}
+
+/// Whether the console shows Unicode: on Windows only when its output code page is UTF-8.
+pub fn unicode() -> bool {
+    #[cfg(windows)]
+    {
+        unsafe extern "system" {
+            fn GetConsoleOutputCP() -> u32;
+        }
+        // SAFETY: takes no arguments and only reads the console's state.
+        unsafe { GetConsoleOutputCP() == 65001 }
+    }
+    #[cfg(not(windows))]
+    true
 }
 
 #[cfg(test)]
@@ -81,11 +114,40 @@ mod tests {
     use super::*;
     use crate::report::{explain, next};
 
+    fn plain(text: String) -> String {
+        anstream::adapter::strip_str(&text).to_string()
+    }
+
+    #[test]
+    fn styles_marks_and_headlines() {
+        let e = next("0 0 30 2 *", None, Some("UTC"), None, 1).unwrap_err();
+        assert!(error(&e).starts_with("\x1b[31m✗\x1b[0m This schedule never runs"));
+        let u = next("0 0 1,15 * FRI", None, Some("UTC"), None, 1).unwrap();
+        let text = upcoming(&u);
+        assert!(text.starts_with(
+            "\x1b[1mAt 00:00, on day 1 and 15 of the month, or on Friday.\x1b[0m\n\x1b[2mUTC"
+        ));
+        assert!(text.ends_with("\x1b[33m!\x1b[0m Runs when the day of month OR the day of week matches, not only when both do.\n"));
+    }
+
+    #[test]
+    fn falls_back_to_ascii_marks() {
+        let e = explain("0 9 */2 * MON", None).unwrap();
+        assert!(
+            ascii(&plain(explained(&e)))
+                .starts_with("At 09:00, on every 2nd day of the month (1, 3, 5, ...), only")
+        );
+        let e = next("0 0 30 2 *", None, Some("UTC"), None, 1).unwrap_err();
+        assert!(ascii(&plain(error(&e))).starts_with("x This schedule"));
+        let u = next("@daily", None, Some("UTC"), None, 1).unwrap();
+        assert!(ascii(&plain(upcoming(&u))).contains("\nUTC - tzdata 2026f - Unix cron rules\n"));
+    }
+
     #[test]
     fn lines_up_the_fields() {
         let e = explain("*/15 9-17 * * 1-5", None).unwrap();
         assert_eq!(
-            explained(&e),
+            plain(explained(&e)),
             "Every 15 minutes from 09:00 through 17:45, Monday through Friday.
 Dialect: unix (5 fields)
   minute        */15  every 15 minutes
@@ -102,7 +164,7 @@ Dialect: unix (5 fields)
         let tz = Some("America/New_York");
         let u = next("30 2 * * *", None, tz, Some("2027-03-13T12:00"), 3).unwrap();
         assert_eq!(
-            upcoming(&u),
+            plain(upcoming(&u)),
             "At 02:30 every day.
 America/New_York · tzdata 2026f · Unix cron rules
   Sun 2027-03-14 03:00 -04:00  moved from 02:30
@@ -113,22 +175,24 @@ America/New_York · tzdata 2026f · Unix cron rules
 "
         );
         let u = next("*/30 1 * * *", None, tz, Some("2026-10-31T23:00"), 3).unwrap();
-        assert!(upcoming(&u).contains("  Sun 2026-11-01 01:00 -04:00  first 01:00 of two\n"));
+        assert!(
+            plain(upcoming(&u)).contains("  Sun 2026-11-01 01:00 -04:00  first 01:00 of two\n")
+        );
         let u = next("*/15 2 * * *", None, tz, Some("2027-03-13T12:00"), 1).unwrap();
-        assert!(upcoming(&u).contains("  skipped Sun 2027-03-14 02:45 (DST gap)\n"));
+        assert!(plain(upcoming(&u)).contains("  skipped Sun 2027-03-14 02:45 (DST gap)\n"));
     }
 
     #[test]
     fn shows_seconds_only_when_a_run_has_them() {
         let u = next("15 30 9 * * ?", None, Some("UTC"), Some("2026-10-29"), 1).unwrap();
-        assert!(upcoming(&u).contains("  Thu 2026-10-29 09:30:15 +00:00\n"));
+        assert!(plain(upcoming(&u)).contains("  Thu 2026-10-29 09:30:15 +00:00\n"));
     }
 
     #[test]
     fn puts_the_hint_under_the_error() {
         let e = next("0 0 30 2 *", None, Some("UTC"), None, 1).unwrap_err();
         assert_eq!(
-            error(&e),
+            plain(error(&e)),
             "✗ This schedule never runs: day 30 doesn't occur in February.
   Pick a day that exists in every chosen month, or use L in Quartz or AWS.
 "
