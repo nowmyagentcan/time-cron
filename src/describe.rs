@@ -32,7 +32,7 @@ pub fn describe(s: &Schedule) -> String {
 }
 
 /// One field as explained.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct FieldInfo {
     /// The JSON name: "day_of_month".
     pub name: &'static str,
@@ -42,7 +42,8 @@ pub struct FieldInfo {
     pub meaning: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(untagged)]
 pub enum Values {
     Numbers(Vec<u16>),
     /// Day of week as SUN-SAT, so nobody has to know which dialect counts Sunday as 1.

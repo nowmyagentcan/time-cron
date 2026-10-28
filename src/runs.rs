@@ -27,7 +27,8 @@ pub struct Run {
     pub scheduled: Option<DateTime>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Dst {
     Moved,
     First,

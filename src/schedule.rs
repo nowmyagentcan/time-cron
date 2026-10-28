@@ -1,6 +1,7 @@
 use jiff::civil::{Date, Weekday};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Dialect {
     Unix,
     Quartz,

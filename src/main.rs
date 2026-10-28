@@ -3,6 +3,7 @@ use std::process::ExitCode;
 use std::sync::LazyLock;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use serde::Serialize;
 use time_cron::error::Error;
 use time_cron::schedule::Dialect;
 use time_cron::{expr, report, text};
@@ -13,6 +14,7 @@ static VERSION: LazyLock<String> =
 const EXAMPLES: &str = "\x1b[1;4mExamples:\x1b[0m
   time-cron \"*/15 9-17 * * 1-5\"
   time-cron next \"0 9 * * 1-5\" --tz Europe/Berlin --count 10
+  time-cron next \"0 0 12 ? * MON#2\" --json
   time-cron explain \"cron(0 18 ? * MON-FRI *)\"";
 
 #[derive(Parser)]
@@ -55,6 +57,9 @@ struct Common {
         hide_possible_values = true
     )]
     dialect: DialectArg,
+    /// Print one JSON object
+    #[arg(long, display_order = 10)]
+    json: bool,
     /// Show the cause of an error
     #[arg(long, display_order = 10)]
     debug: bool,
@@ -101,7 +106,7 @@ fn main() -> ExitCode {
     let (common, answer) = match &cli.command {
         Some(Command::Explain(c)) => (
             c,
-            report::explain(&c.expr.join(" "), dialect(c)).map(|e| text::explained(&e)),
+            report::explain(&c.expr.join(" "), dialect(c)).map(|e| show(c, &e, text::explained)),
         ),
         Some(Command::Next(n)) => (&n.common, next(n)),
         None => (&cli.next.common, next(&cli.next)),
@@ -109,18 +114,22 @@ fn main() -> ExitCode {
     if common.debug {
         debug(common);
     }
-    let answer = match answer {
-        Ok(text) => text,
-        Err(e) => {
+    let (out, code) = match answer {
+        Ok(out) => (out, 0),
+        Err(error) => {
             if common.debug {
-                eprintln!("debug: {e:?}");
+                eprintln!("debug: {error:?}");
             }
-            eprint!("{}", text::error(&e));
-            return ExitCode::from(e.exit_code());
+            if common.json {
+                (json(&report::Failure { error: &error }), error.exit_code())
+            } else {
+                eprint!("{}", text::error(&error));
+                (String::new(), error.exit_code())
+            }
         }
     };
-    match std::io::stdout().lock().write_all(answer.as_bytes()) {
-        Ok(()) => ExitCode::SUCCESS,
+    match std::io::stdout().lock().write_all(out.as_bytes()) {
+        Ok(()) => ExitCode::from(code),
         Err(e) => {
             eprint!(
                 "{}",
@@ -140,7 +149,16 @@ fn next(n: &NextArgs) -> Result<String, Error> {
         n.from.as_deref(),
         n.count,
     )
-    .map(|u| text::upcoming(&u))
+    .map(|u| show(&n.common, &u, text::upcoming))
+}
+
+/// The answer as `--json` or as text.
+fn show<T: Serialize>(c: &Common, answer: &T, text: fn(&T) -> String) -> String {
+    if c.json { json(answer) } else { text(answer) }
+}
+
+fn json(value: &impl Serialize) -> String {
+    serde_json::to_string(value).expect("answers are plain data") + "\n"
 }
 
 fn dialect(c: &Common) -> Option<Dialect> {
