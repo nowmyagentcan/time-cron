@@ -141,23 +141,18 @@ fn indent(text: &str) -> String {
 
 /// The box with name and sentence, the commands and the zone in use.
 fn banner(zone: &str) -> String {
-    let name = format!("✻ time-cron {}", env!("CARGO_PKG_VERSION"));
-    let sentence = format!("  {SENTENCE}");
-    let width = name.chars().count().max(sentence.chars().count());
-    let pad = |line: &str| " ".repeat(width - line.chars().count());
-    let bar = "─".repeat(width + 2);
-    let bold_name = name.replacen("✻ time-cron", &format!("{BOLD}✻ time-cron{RESET}"), 1);
+    // The sentence is the longer line, so it sets the width.
+    let version = format!("{:<1$}", env!("CARGO_PKG_VERSION"), SENTENCE.len() - 10);
+    let bar = "─".repeat(SENTENCE.len() + 4);
     format!(
         "{DIM}╭{bar}╮{RESET}
-{DIM}│{RESET} {bold_name}{} {DIM}│{RESET}
-{DIM}│{RESET} {sentence}{} {DIM}│{RESET}
+{DIM}│{RESET} {BOLD}✻ time-cron{RESET} {version} {DIM}│{RESET}
+{DIM}│{RESET}   {SENTENCE} {DIM}│{RESET}
 {DIM}╰{bar}╯{RESET}
   {DIM}Type a cron expression · /tz /dialect /to · /help · /quit{RESET}
   {DIM}Times in {zone} (tzdata {TZDATA}){RESET}
 
-",
-        pad(&name),
-        pad(&sentence)
+"
     )
 }
 

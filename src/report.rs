@@ -142,14 +142,14 @@ pub fn convert(
     to: Dialect,
 ) -> Result<Converted, Error> {
     let s = runnable(expression, dialect)?;
-    let c = convert::convert(&s, to)?;
+    let (results, warnings) = convert::convert(&s, to)?;
     Ok(Converted {
         expression: expression.trim().into(),
         dialect: s.dialect,
         to,
-        results: c.results,
+        results,
         description: describe(&s),
-        warnings: c.warnings,
+        warnings,
     })
 }
 

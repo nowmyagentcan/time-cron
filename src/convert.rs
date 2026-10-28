@@ -9,15 +9,9 @@ use crate::schedule::Dialect::{self, Aws, Quartz, Unix};
 use crate::schedule::Kind::{self, DayOfMonth, DayOfWeek, Hour, Minute, Month, Second, Year};
 use crate::schedule::{DayRule, DomSpecial, Dow, Schedule};
 
-#[derive(Debug)]
-pub struct Conversion {
-    pub results: Vec<String>,
-    pub warnings: Vec<Warning>,
-}
-
-/// The schedule written in `to`, given only once each result is shown to run at the same
-/// times as the source.
-pub fn convert(s: &Schedule, to: Dialect) -> Result<Conversion, Error> {
+/// The schedule written in `to`, with its warnings, given only once each result is shown to
+/// run at the same times as the source.
+pub fn convert(s: &Schedule, to: Dialect) -> Result<(Vec<String>, Vec<Warning>), Error> {
     let results = rewrite(s, to)?;
     let mut warnings = vec![];
     if results.len() == 2 {
@@ -35,7 +29,7 @@ pub fn convert(s: &Schedule, to: Dialect) -> Result<Conversion, Error> {
         ));
     }
     warnings.extend(check(s, to, &results)?);
-    Ok(Conversion { results, warnings })
+    Ok((results, warnings))
 }
 
 /// Re-reads each result and compares the first 100 runs after 2026-01-01 in UTC with the
@@ -236,13 +230,14 @@ mod tests {
     use super::*;
 
     fn to(text: &str, to: Dialect) -> Result<Vec<String>, (String, Option<String>)> {
-        let c = convert(&parse(text, None).unwrap(), to).map_err(|e| (e.message, e.hint))?;
-        Ok(c.results)
+        let (results, _) =
+            convert(&parse(text, None).unwrap(), to).map_err(|e| (e.message, e.hint))?;
+        Ok(results)
     }
 
     fn warnings(text: &str, to: Dialect) -> Vec<String> {
-        let c = convert(&parse(text, None).unwrap(), to).unwrap();
-        c.warnings.into_iter().map(|w| w.message).collect()
+        let (_, warnings) = convert(&parse(text, None).unwrap(), to).unwrap();
+        warnings.into_iter().map(|w| w.message).collect()
     }
 
     #[test]
