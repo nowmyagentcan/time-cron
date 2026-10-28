@@ -47,6 +47,75 @@ pub fn describe(s: &Schedule) -> String {
     text + "."
 }
 
+/// One field as explained.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FieldInfo {
+    /// The JSON name: "day_of_month".
+    pub name: &'static str,
+    pub text: String,
+    /// None for `*` and `?`, and when the field holds L, W or #.
+    pub values: Option<Values>,
+    pub meaning: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Values {
+    Numbers(Vec<u16>),
+    /// Day of week as SUN-SAT, so nobody has to know which dialect counts Sunday as 1.
+    Days(Vec<&'static str>),
+}
+
+/// Each field as written, with its values and what it means.
+pub fn fields(s: &Schedule) -> Vec<FieldInfo> {
+    let field = |kind: Kind, text: &str| {
+        let v = s.values(kind);
+        let values = match kind {
+            _ if text == "*" || text == "?" => None,
+            DayOfMonth if !s.dom.specials.is_empty() => None,
+            DayOfWeek if !matches!(s.dow, Dow::Days(_)) || text.eq_ignore_ascii_case("L") => None,
+            DayOfWeek => Some(Values::Days(
+                v.iter().map(|&d| crate::expr::DAYS[d as usize]).collect(),
+            )),
+            _ => Some(Values::Numbers(v)),
+        };
+        FieldInfo {
+            name: kind.key(),
+            text: text.into(),
+            values,
+            meaning: meaning(s, kind),
+        }
+    };
+    s.fields.iter().map(|f| field(f.kind, &f.text)).collect()
+}
+
+/// What one field means: "every 15 minutes", "9 through 17", "Monday through Friday".
+pub(crate) fn meaning(s: &Schedule, kind: Kind) -> String {
+    let v = s.values(kind);
+    let bare = |phrase: Option<String>, any: &str| match phrase {
+        Some(p) => ["on ", "in ", "from "]
+            .iter()
+            .find_map(|prep| p.strip_prefix(prep))
+            .unwrap_or(&p)
+            .to_string(),
+        None => any.into(),
+    };
+    match kind {
+        Second | Minute | Hour => steps(s, kind, &v).unwrap_or_else(|| numbers(&v)),
+        DayOfMonth | DayOfWeek if s.field(kind).is_some_and(|f| f.text == "?") => {
+            let other = if kind == DayOfMonth {
+                DayOfWeek
+            } else {
+                DayOfMonth
+            };
+            format!("not used: the {} field decides", other.words())
+        }
+        DayOfMonth => bare(dom(s), "any day"),
+        Month => bare(months(s), "any month"),
+        DayOfWeek => bare(dow(s), "any day of the week"),
+        Year => bare(years(s), "any year"),
+    }
+}
+
 /// The time of day, and whether it names clock times ("At 09:00 and 17:00").
 fn time(s: &Schedule) -> (String, bool) {
     const KINDS: [Kind; 3] = [Second, Minute, Hour];
@@ -411,6 +480,67 @@ mod tests {
         for (expr, want) in cases {
             assert_eq!(text(expr), want, "{expr}");
         }
+    }
+
+    /// Each field as `name text values meaning`, values as `-` when null.
+    fn explained(expr: &str) -> Vec<String> {
+        let s = parse(expr, None).unwrap();
+        let fields = fields(&s).into_iter().map(|f| {
+            let values = match f.values {
+                None => "-".into(),
+                Some(Values::Numbers(v)) => format!("{v:?}"),
+                Some(Values::Days(v)) => format!("{v:?}"),
+            };
+            format!("{} {} {values} {}", f.name, f.text, f.meaning)
+        });
+        fields.collect()
+    }
+
+    #[test]
+    #[rustfmt::skip]
+    fn explains_each_field() {
+        assert_eq!(
+            explained("*/15 9-17 * * 1-5"),
+            [
+                "minute */15 [0, 15, 30, 45] every 15 minutes",
+                "hour 9-17 [9, 10, 11, 12, 13, 14, 15, 16, 17] 9 through 17",
+                "day_of_month * - any day",
+                "month * - any month",
+                "day_of_week 1-5 [\"MON\", \"TUE\", \"WED\", \"THU\", \"FRI\"] Monday through Friday",
+            ]
+        );
+        assert_eq!(
+            explained("0 0 12 ? * MON#2 2030"),
+            [
+                "second 0 [0] 0",
+                "minute 0 [0] 0",
+                "hour 12 [12] 12",
+                "day_of_month ? - not used: the day of week field decides",
+                "month * - any month",
+                "day_of_week MON#2 - the second Monday of the month",
+                "year 2030 [2030] 2030",
+            ]
+        );
+        assert_eq!(
+            explained("cron(5,35 * L-3 1,7 ? 2027-2028)"),
+            [
+                "minute 5,35 [5, 35] 5 and 35",
+                "hour * - every hour",
+                "day_of_month L-3 - 3 days before the last day of the month",
+                "month 1,7 [1, 7] January and July",
+                "day_of_week ? - not used: the day of month field decides",
+                "year 2027-2028 [2027, 2028] 2027 through 2028",
+            ]
+        );
+        let dow = |expr| explained(expr).swap_remove(5);
+        assert_eq!(dow("0 0 12 ? * L"), "day_of_week L - Saturday");
+        assert_eq!(dow("0 0 12 ? * 6L"), "day_of_week 6L - the last Friday of the month");
+        assert_eq!(dow("0 0 12 ? * 1,7"), "day_of_week 1,7 [\"SUN\", \"SAT\"] Sunday and Saturday");
+        assert_eq!(explained("0 9 * * 7")[4], "day_of_week 7 [\"SUN\"] Sunday");
+        assert_eq!(explained("0 0 9 15W * ?")[3], "day_of_month 15W - the weekday nearest day 15 of the month");
+        assert_eq!(explained("0 9 */2 * *")[2], "day_of_month */2 [1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31] every 2nd day of the month (1, 3, 5, …)");
+        assert_eq!(explained("@daily")[0], "minute 0 [0] 0");
+        assert!(explained("@reboot").is_empty());
     }
 
     #[test]

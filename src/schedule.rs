@@ -42,6 +42,15 @@ impl Kind {
         }
     }
 
+    /// The name in JSON.
+    pub fn key(self) -> &'static str {
+        match self {
+            Kind::DayOfMonth => "day_of_month",
+            Kind::DayOfWeek => "day_of_week",
+            _ => self.words(),
+        }
+    }
+
     /// The values the model holds (day of week 0-6, Sunday first).
     pub fn range(self) -> (u16, u16) {
         match self {

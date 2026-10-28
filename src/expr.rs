@@ -6,7 +6,7 @@ use crate::schedule::{DayRule, Dom, DomSpecial, Dow, Field, Schedule, Set};
 const MONTHS: [&str; 12] = [
     "JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC",
 ];
-const DAYS: [&str; 7] = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
+pub(crate) const DAYS: [&str; 7] = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
 
 const NICKNAMES: [(&str, &str); 8] = [
     ("@yearly", "0 0 1 1 *"),
