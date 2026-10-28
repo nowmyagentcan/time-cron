@@ -9,7 +9,7 @@ use time_cron::error::Error;
 use time_cron::report::DialectArg;
 use time_cron::runs::system_zone;
 use time_cron::schedule::Dialect;
-use time_cron::{expr, interactive, mcp, report, text};
+use time_cron::{expr, interactive, mcp, report, text, ui};
 
 static VERSION: LazyLock<String> =
     LazyLock::new(|| format!("{} (tzdata {})", env!("CARGO_PKG_VERSION"), report::TZDATA));
@@ -50,8 +50,17 @@ enum Command {
     /// Rewrite the expression for unix, quartz or aws
     #[command(after_help = EXAMPLES)]
     Convert(ConvertArgs),
+    /// Open the local web page
+    Ui(UiArgs),
     /// Run the MCP server on stdio
     Mcp,
+}
+
+#[derive(Args)]
+struct UiArgs {
+    /// Port on 127.0.0.1 [default: a free one]
+    #[arg(long, value_name = "N", default_value = "0", hide_default_value = true)]
+    port: u16,
 }
 
 #[derive(Args)]
@@ -153,6 +162,7 @@ fn main() -> ExitCode {
     };
     let (common, answer) = match &cli.command {
         Some(Command::Mcp) => return served(mcp::serve()),
+        Some(Command::Ui(u)) => return served(ui::serve(u.port)),
         Some(Command::Explain(c)) => (
             c,
             c.expression()

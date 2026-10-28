@@ -9,3 +9,4 @@ pub mod report;
 pub mod runs;
 pub mod schedule;
 pub mod text;
+pub mod ui;
