@@ -194,10 +194,7 @@ mod tests {
     #[rustfmt::skip]
     fn warns_about_each_mistake() {
         let cases: &[(&str, &[&str])] = &[
-            ("0 0 1,15 * FRI", &["dom_dow_or: Runs when the day of month OR the day of week matches, not only when both do."]),
-            ("0 9 */2 * MON", &["dom_dow_and: The day of month field starts with '*', so cron runs only when both day fields match. Kubernetes reads it the other way: either may match."]),
             ("0 9 1-15 * */2", &["dom_dow_and: The day of week field starts with '*', so cron runs only when both day fields match. Kubernetes reads it the other way: either may match."]),
-            ("0 0 12 ? * 1-5", &["dow_one_is_sunday: Day 1 is Sunday here, so 1-5 means Sunday through Thursday. Use names like MON-FRI to avoid mistakes."]),
             ("cron(0 12 ? * 6L *)", &["dow_one_is_sunday: Day 1 is Sunday here, so 6L means the last Friday of the month. Use names like MON-FRI to avoid mistakes.", "aws_undocumented: AWS doesn't document 6L; check it in the EventBridge console before relying on it."]),
             ("* 9-17 * * *", &["every_minute: Runs every minute while the hour is 9 through 17: 540 runs a day. Set the minute field to 0 to run once at the start of the hour."]),
             ("* * 9 * * ?", &["every_second: Runs every second. Set the seconds field to 0 to run once a minute."]),
@@ -221,6 +218,32 @@ mod tests {
         }
     }
 
+    /// The static warnings each next-run golden carries.
+    #[test]
+    #[rustfmt::skip]
+    fn matches_the_next_run_goldens() {
+        const OR: &str = "dom_dow_or: Runs when the day of month OR the day of week matches, not only when both do.";
+        let cases: &[(&str, &[&str])] = &[
+            ("0 9 1 * MON", &[OR]),
+            ("0 9 */2 * MON", &["dom_dow_and: The day of month field starts with '*', so cron runs only when both day fields match. Kubernetes reads it the other way: either may match."]),
+            ("0 0 1,15 * FRI", &[OR]),
+            ("0 0 29 2 *", &["short_months: Day 29 doesn't exist in every month: no run on it in February except in leap years."]),
+            ("0 15 10 ? * 6L", &["dow_one_is_sunday: Day 1 is Sunday here, so 6L means the last Friday of the month. Use names like MON-FRI to avoid mistakes."]),
+            ("0 0 12 ? * 1-5", &["dow_one_is_sunday: Day 1 is Sunday here, so 1-5 means Sunday through Thursday. Use names like MON-FRI to avoid mistakes."]),
+        ];
+        for &(expr, want) in cases {
+            assert_eq!(warnings(expr), want, "{expr}");
+        }
+        for expr in [
+            "0 0 * * 7", "@daily", "30 2 * * *", "0,30 2 * * *", "*/15 2 * * *", "30 1 * * *",
+            "*/30 1 * * *", "0 * * * *", "0 30 1 * * ?", "0 30 2 * * ?", "cron(30 2 * * ? *)",
+            "cron(30 1 * * ? *)", "0 0 * * *", "0 0 12 ? * MON#2", "0 0 9 15W * ?", "0 0 9 LW * ?",
+            "0 0 12 L-3 * ?", "0 0 12 ? * L", "cron(0 18 ? * MON-FRI *)", "0 0 30 2 *",
+        ] {
+            assert_eq!(warnings(expr), Vec::<String>::new(), "{expr}");
+        }
+    }
+
     #[test]
     fn keeps_quiet_about_sound_schedules() {
         for expr in [
@@ -228,11 +251,8 @@ mod tests {
             "*/15 9-17 * * 1-5",
             "0 9 1-31 * MON",
             "0 0 */2 * *",
-            "0 0 12 ? * MON#2",
-            "0 0 12 ? * L",
             "0 0/20 * * * ?",
             "cron(0/15 * * * ? *)",
-            "cron(0 18 ? * MON-FRI *)",
             "cron(0 12 L * ? *)",
             "@hourly",
             "@reboot",

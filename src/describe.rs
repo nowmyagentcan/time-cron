@@ -371,53 +371,40 @@ mod tests {
     }
 
     #[test]
-    fn describes_times_of_day() {
+    #[rustfmt::skip]
+    fn matches_every_description_golden() {
         let cases = [
+            ("0 9 * * 1-5", "At 09:00, Monday through Friday."),
+            ("*/15 9-17 * * 1-5", "Every 15 minutes from 09:00 through 17:45, Monday through Friday."),
             ("30 2 * * *", "At 02:30 every day."),
-            ("0 9,17 * * *", "At 09:00 and 17:00 every day."),
-            ("15 30 9 * * ?", "At 09:30:15 every day."),
-            (
-                "0 0 */6 * * ?",
-                "At 00:00, 06:00, 12:00 and 18:00 every day.",
-            ),
+            ("@daily", "At 00:00 every day."),
             ("@hourly", "At minute 0 of every hour."),
-            ("30 */2 * * *", "At minute 30 of every 2nd hour."),
+            ("0 * * * *", "At minute 0 of every hour."),
             ("* * * * *", "Every minute."),
-            ("* * * * * ?", "Every second."),
-            ("*/30 * * * * ?", "Every 30 seconds."),
-            ("cron(0/15 * * * ? *)", "Every 15 minutes."),
-            ("*/7 * * * *", "Every 7 minutes."),
-            ("@reboot", "Once, when cron starts."),
-        ];
-        for (expr, want) in cases {
-            assert_eq!(text(expr), want, "{expr}");
-        }
-    }
-
-    #[test]
-    fn bounds_steps_by_their_first_and_last_run() {
-        let cases = [
             ("* 9 * * *", "Every minute from 09:00 through 09:59."),
-            (
-                "*/15 9-17 * * *",
-                "Every 15 minutes from 09:00 through 17:45.",
-            ),
-            (
-                "0 0/5 14 * * ?",
-                "Every 5 minutes from 14:00 through 14:55.",
-            ),
-            (
-                "* 0 9 * * ?",
-                "Every second from 09:00:00 through 09:00:59.",
-            ),
-            (
-                "*/10 * 9-10 * * ?",
-                "Every 10 seconds from 09:00:00 through 10:59:50.",
-            ),
-            (
-                "15 */15 * * * ?",
-                "Every 15 minutes from 00:00:15 through 23:45:15.",
-            ),
+            ("0 9,17 * * *", "At 09:00 and 17:00 every day."),
+            ("5 4 * * sun", "At 04:05, on Sunday."),
+            ("0 9 * * 1,3,5", "At 09:00, on Monday, Wednesday and Friday."),
+            ("0 0 1 1 *", "At 00:00, on January 1."),
+            ("0 0,12 1 */2 *", "At 00:00 and 12:00, on day 1 of the month, in January, March, May, July, September and November."),
+            ("0 0 1,15 * FRI", "At 00:00, on day 1 and 15 of the month, or on Friday."),
+            ("0 9 */2 * MON", "At 09:00, on every 2nd day of the month (1, 3, 5, …), only when that day is a Monday."),
+            ("@reboot", "Once, when cron starts."),
+            ("0 15 10 L * ?", "At 10:15, on the last day of the month."),
+            ("0 0 12 ? * MON#2", "At 12:00, on the second Monday of the month."),
+            ("0 15 10 ? * 6L", "At 10:15, on the last Friday of the month."),
+            ("0 0 9 15W * ?", "At 09:00, on the weekday nearest day 15 of the month."),
+            ("0 0 9 LW * ?", "At 09:00, on the last weekday of the month."),
+            ("0 0 12 L-3 * ?", "At 12:00, 3 days before the last day of the month."),
+            ("0 0 12 ? * L", "At 12:00, on Saturday."),
+            ("0 0/5 14 * * ?", "Every 5 minutes from 14:00 through 14:55."),
+            ("*/30 * * * * ?", "Every 30 seconds."),
+            ("15 30 9 * * ?", "At 09:30:15 every day."),
+            ("0 0 12 ? * 1-5", "At 12:00, Sunday through Thursday."),
+            ("0 0 12 1 1 ? 2030", "At 12:00, on January 1, in 2030."),
+            ("cron(0 18 ? * MON-FRI *)", "At 18:00, Monday through Friday."),
+            ("cron(0/15 * * * ? *)", "Every 15 minutes."),
+            ("cron(0 8 1 * ? *)", "At 08:00, on day 1 of the month."),
         ];
         for (expr, want) in cases {
             assert_eq!(text(expr), want, "{expr}");
@@ -425,27 +412,24 @@ mod tests {
     }
 
     #[test]
-    fn falls_back_to_each_field() {
+    #[rustfmt::skip]
+    fn describes_other_times_of_day() {
         let cases = [
-            (
-                "5,35 1,4,9 * * *",
-                "At minutes 5 and 35 of hours 1, 4 and 9.",
-            ),
-            (
-                "0 1,4,9-13 * * *",
-                "At minute 0 of hours 1, 4 and 9 through 13.",
-            ),
-            ("0 9-17 * * *", "At minute 0 of hours 9 through 17."),
+            ("0 0 */6 * * ?", "At 00:00, 06:00, 12:00 and 18:00 every day."),
+            ("30 */2 * * *", "At minute 30 of every 2nd hour."),
+            ("* * * * * ?", "Every second."),
+            ("*/7 * * * *", "Every 7 minutes."),
+            // Steps bounded by a window name its first and last run.
+            ("* 0 9 * * ?", "Every second from 09:00:00 through 09:00:59."),
+            ("*/10 * 9-10 * * ?", "Every 10 seconds from 09:00:00 through 10:59:50."),
+            ("15 */15 * * * ?", "Every 15 minutes from 00:00:15 through 23:45:15."),
+            // Anything else goes field by field.
+            ("5,35 1,4,9 * * *", "At minutes 5 and 35 of hours 1, 4 and 9."),
+            ("0 1,4,9-13 * * *", "At minute 0 of hours 1, 4 and 9 through 13."),
             ("5,35 * * * *", "At minutes 5 and 35 of every hour."),
             ("*/15 9,17 * * *", "Every 15 minutes of hours 9 and 17."),
-            (
-                "0,30 5 0-23 * * ?",
-                "At seconds 0 and 30 of minute 5 of every hour.",
-            ),
-            (
-                "30 9-21/2 * * *",
-                "At minute 30 of hours 9, 11, 13, 15, 17, 19 and 21.",
-            ),
+            ("0,30 5 0-23 * * ?", "At seconds 0 and 30 of minute 5 of every hour."),
+            ("30 9-21/2 * * *", "At minute 30 of hours 9, 11, 13, 15, 17, 19 and 21."),
         ];
         for (expr, want) in cases {
             assert_eq!(text(expr), want, "{expr}");
