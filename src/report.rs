@@ -83,6 +83,10 @@ fn gap_skips<S: Serializer>(skipped: &[DateTime], s: S) -> Result<S::Ok, S::Erro
 
 pub fn explain(expression: &str, dialect: Option<Dialect>) -> Result<Explained, Error> {
     let s = parse(expression, dialect)?;
+    // A schedule that never runs is an error in every command.
+    if !s.reboot {
+        runs::next(&s, Some("UTC"), None, 1)?;
+    }
     Ok(Explained {
         expression: expression.trim().into(),
         dialect: s.dialect,
@@ -218,5 +222,14 @@ mod tests {
         assert_eq!(e.expression, "@daily");
         assert_eq!(e.description, "At 00:00 every day.");
         assert_eq!(explain("", None).unwrap_err().code, "empty");
+        assert_eq!(
+            explain("@reboot", None).unwrap().description,
+            "Once, when cron starts."
+        );
+        assert_eq!(explain("0 0 30 2 *", None).unwrap_err().code, "never_runs");
+        assert_eq!(
+            explain("0 0 1 1 ? 2020", None).unwrap_err().code,
+            "never_runs"
+        );
     }
 }
