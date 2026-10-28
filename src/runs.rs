@@ -1,6 +1,6 @@
 use jiff::civil::{Date, DateTime, Time, date};
 use jiff::tz::{self, AmbiguousOffset, Offset, TimeZone};
-use jiff::{Timestamp, ToSpan, Zoned};
+use jiff::{SignedDuration, Timestamp, ToSpan, Zoned};
 
 use crate::error::{Error, Warning};
 use crate::schedule::{DayRule, Dialect, Schedule};
@@ -91,6 +91,8 @@ pub fn next(
         .filter(|(at, _)| *at > from.timestamp() && *at <= last)
         .map(|(_, dt)| dt)
         .collect();
+    let timezone = tz.iana_name().unwrap_or("UTC").to_string();
+    warnings.extend(dst_warnings(s, &tz, &timezone, from.timestamp()));
     if runs.len() < count {
         let year = s.year.iter().last().unwrap_or(LAST_YEAR as u16);
         warnings.push(Warning::new(
@@ -102,12 +104,86 @@ pub fn next(
         ));
     }
     Ok(Next {
-        timezone: tz.iana_name().unwrap_or("UTC").to_string(),
+        timezone,
         from,
         runs,
         skipped,
         warnings,
     })
+}
+
+/// One warning per zone transition in the 366 days after `from` whose gap or fold holds
+/// some of the schedule's wall times, saying what the scheduler does with them.
+fn dst_warnings(s: &Schedule, tz: &TimeZone, zone: &str, from: Timestamp) -> Vec<Warning> {
+    let end = from + SignedDuration::from_hours(366 * 24);
+    let clock = if s.second.iter().any(|sec| sec != 0) {
+        "%H:%M:%S"
+    } else {
+        "%H:%M"
+    };
+    let hm = |dt: DateTime| dt.strftime("%H:%M").to_string();
+    tz.following(from)
+        .take_while(|t| t.timestamp() <= end)
+        .filter_map(|t| {
+            let before = tz.to_offset(t.timestamp() - SignedDuration::from_nanos(1));
+            let shift = t.offset().seconds() - before.seconds();
+            let (old, new) = (
+                before.to_datetime(t.timestamp()),
+                t.offset().to_datetime(t.timestamp()),
+            );
+            // The wall times that happen never (gap) or twice (fold).
+            let (lo, hi) = if shift > 0 { (old, new) } else { (new, old) };
+            let hit: Vec<DateTime> = lo
+                .date()
+                .series(1.day())
+                .take_while(|d| *d <= hi.date())
+                .filter(|&d| s.runs_on(d))
+                .flat_map(|d| times(s).map(move |t| d.to_datetime(t)))
+                .filter(|dt| (lo..hi).contains(dt))
+                .collect();
+            if hit.is_empty() {
+                return None;
+            }
+            let mut shown: Vec<String> = hit
+                .iter()
+                .take(3)
+                .map(|dt| dt.strftime(clock).to_string())
+                .collect();
+            if hit.len() > 3 {
+                shown.push(format!("{} more", hit.len() - 3));
+            }
+            let times = and_list(shown.into_iter());
+            let cronie = s.dialect == Dialect::Unix && s.fixed_time && shift.abs() <= 3 * 3600;
+            let (date, was, now) = (lo.date(), hm(old), hm(new));
+            Some(if shift > 0 {
+                let what = match s.dialect {
+                    _ if cronie => format!("Cron runs {times} right after the jump."),
+                    Dialect::Unix => format!("Cron skips {times}."),
+                    Dialect::Quartz => format!("Quartz skips {times}."),
+                    Dialect::Aws => format!("EventBridge skips {times}."),
+                };
+                Warning::new(
+                    "dst_gap",
+                    format!("{date}: clocks jump from {was} to {now} in {zone}. {what}"),
+                )
+            } else {
+                let what = match s.dialect {
+                    _ if cronie => format!("Cron runs {times} once, the first time."),
+                    Dialect::Unix => format!("Cron runs {times} both times."),
+                    Dialect::Quartz => format!("Quartz runs {times} once, the second time."),
+                    Dialect::Aws => format!("EventBridge runs {times} once, the first time."),
+                };
+                Warning::new(
+                    "dst_fold",
+                    format!(
+                        "{date}: clocks go back from {was} to {now} in {zone}, so {}-{} happens twice. {what}",
+                        hm(lo),
+                        hm(hi)
+                    ),
+                )
+            })
+        })
+        .collect()
 }
 
 /// Adds the run(s) the scheduler makes for wall time `dt`, or the time it skips, by its own
@@ -365,6 +441,48 @@ mod tests {
         // EventBridge takes the first pass and skips gap times.
         assert_eq!(runs_in("cron(30 1 * * ? *)", NY, AUTUMN, 2).0, ["2026-11-01T01:30:00-04:00 First", "2026-11-02T01:30:00-05:00"]);
         assert_eq!(runs_in("cron(30 2 * * ? *)", NY, SPRING, 1), (vec!["2027-03-15T02:30:00-04:00".into()], vec!["2027-03-14T02:30:00".into()]));
+    }
+
+    fn warnings(text: &str, tz: &str, from: &str) -> Vec<String> {
+        let n = next(&parse(text, None).unwrap(), Some(tz), Some(from), 1).unwrap();
+        n.warnings
+            .iter()
+            .map(|w| format!("{}: {}", w.code, w.message))
+            .collect()
+    }
+
+    #[test]
+    #[rustfmt::skip]
+    fn warns_about_dst_changes_in_the_next_year() {
+        const NY: &str = "America/New_York";
+        const SPRING: &str = "2027-03-13T12:00";
+        const AUTUMN: &str = "2026-10-31T23:00";
+        const GAP_27: &str = "dst_gap: 2027-03-14: clocks jump from 02:00 to 03:00 in America/New_York.";
+        const FOLD_26: &str = "dst_fold: 2026-11-01: clocks go back from 02:00 to 01:00 in America/New_York, so 01:00-02:00 happens twice.";
+        const FOLD_27: &str = "dst_fold: 2027-11-07: clocks go back from 02:00 to 01:00 in America/New_York, so 01:00-02:00 happens twice.";
+        assert_eq!(warnings("30 2 * * *", NY, SPRING), [
+            format!("{GAP_27} Cron runs 02:30 right after the jump."),
+            "dst_gap: 2028-03-12: clocks jump from 02:00 to 03:00 in America/New_York. Cron runs 02:30 right after the jump.".into(),
+        ]);
+        assert_eq!(warnings("*/15 2 * * *", NY, SPRING)[0], format!("{GAP_27} Cron skips 02:00, 02:15, 02:30 and 1 more."));
+        assert_eq!(warnings("0,30 2 * * *", NY, SPRING)[0], format!("{GAP_27} Cron runs 02:00 and 02:30 right after the jump."));
+        assert_eq!(warnings("0 30 2 * * ?", NY, SPRING)[0], format!("{GAP_27} Quartz skips 02:30."));
+        assert_eq!(warnings("cron(30 2 * * ? *)", NY, SPRING)[1], format!("{GAP_27} EventBridge skips 02:30."));
+        // 366 days from 2026-10-31 end before the 2027-11-07 fold.
+        assert_eq!(warnings("30 1 * * *", NY, AUTUMN), [format!("{FOLD_26} Cron runs 01:30 once, the first time.")]);
+        assert_eq!(warnings("30 1 * * *", NY, SPRING), [format!("{FOLD_27} Cron runs 01:30 once, the first time.")]);
+        assert_eq!(warnings("0 * * * *", NY, AUTUMN)[1], format!("{GAP_27} Cron skips 02:00."));
+        assert_eq!(warnings("0 * * * *", NY, AUTUMN)[0], format!("{FOLD_26} Cron runs 01:00 both times."));
+        assert_eq!(warnings("30 30 1 * * ?", NY, AUTUMN)[0], format!("{FOLD_26} Quartz runs 01:30:30 once, the second time."));
+        assert_eq!(warnings("cron(30 1 * * ? *)", NY, AUTUMN)[1], format!("{FOLD_26} EventBridge runs 01:30 once, the first time."));
+        // Only dates the schedule runs on count: 2026-11-01 is a Sunday.
+        assert_eq!(warnings("30 1 * * MON-SAT", NY, AUTUMN), none());
+        assert_eq!(warnings("0 9 * * *", NY, AUTUMN), none());
+        assert_eq!(warnings("0 9 * * *", "UTC", AUTUMN), none());
+    }
+
+    fn none() -> Vec<String> {
+        vec![]
     }
 
     fn error(
