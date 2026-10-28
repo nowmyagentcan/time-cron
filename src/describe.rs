@@ -289,7 +289,7 @@ fn every(s: &Schedule, kind: Kind, v: &[u16]) -> Option<u16> {
 }
 
 /// The common difference of 2 or more evenly spaced values.
-fn step(v: &[u16]) -> Option<u16> {
+pub(crate) fn step(v: &[u16]) -> Option<u16> {
     let n = v.get(1)?.checked_sub(v[0])?;
     v.windows(2).all(|w| w[1] - w[0] == n).then_some(n)
 }
