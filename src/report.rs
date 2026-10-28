@@ -1,8 +1,8 @@
 //! The answer to each command, shared by every face.
 
-use jiff::Zoned;
 use jiff::civil::DateTime;
 use jiff::fmt::temporal::DateTimePrinter;
+use jiff::{Unit, Zoned};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, Serializer};
 use serde_json::Value;
@@ -99,12 +99,17 @@ struct Skip {
     reason: &'static str,
 }
 
-/// RFC 3339 to the second. As in jiff and Temporal, an offset with seconds (Monrovia's
-/// -00:44:30 until 1972) is rounded to the minute and the wall time kept.
+/// RFC 3339 to the second. An offset with seconds (Monrovia's -00:44:30 until 1972)
+/// becomes the closest whole-minute offset and the wall time moves with it, so the
+/// text still names the same instant (RFC 3339 §5.8, the 1937 Netherlands example).
 fn rfc3339_text(z: &Zoned) -> String {
+    let offset = z
+        .offset()
+        .round(Unit::Minute)
+        .expect("tzdata offsets are in range");
     DateTimePrinter::new()
         .precision(Some(0))
-        .timestamp_with_offset_to_string(&z.timestamp(), z.offset())
+        .timestamp_with_offset_to_string(&z.timestamp(), offset)
 }
 
 fn rfc3339<S: Serializer>(z: &Zoned, s: S) -> Result<S::Ok, S::Error> {

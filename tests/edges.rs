@@ -351,7 +351,6 @@ fn lists_the_same_first_runs_whatever_the_count() {
 }
 
 #[test]
-#[ignore = "known bug: an offset with seconds is rounded but the wall time kept, so `time` is 30 s off"]
 fn every_time_names_the_same_instant_as_its_utc() {
     let instant = |s: &str| {
         s.parse::<jiff::Timestamp>()
