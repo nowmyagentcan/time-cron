@@ -226,7 +226,6 @@ fn does_not_call_a_step_of_one_too_big() {
 }
 
 #[test]
-#[ignore = "known bug: --debug is refused by ui and mcp"]
 fn takes_debug_on_every_command() {
     let out = time_cron(&["mcp", "--debug"]).output().unwrap();
     assert_eq!(

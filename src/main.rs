@@ -56,7 +56,7 @@ enum Command {
     Ui(UiArgs),
     /// Run the MCP server on stdio
     #[command(after_help = EXAMPLES)]
-    Mcp,
+    Mcp(DebugFlag),
 }
 
 #[derive(Args)]
@@ -67,6 +67,15 @@ struct UiArgs {
     /// Print the address without opening the browser
     #[arg(long)]
     no_open: bool,
+    #[command(flatten)]
+    debug: DebugFlag,
+}
+
+#[derive(Args)]
+struct DebugFlag {
+    /// Show the cause of an error
+    #[arg(long, display_order = 10)]
+    debug: bool,
 }
 
 #[derive(Args)]
@@ -141,12 +150,11 @@ fn main() -> ExitCode {
     if std::env::args_os().len() == 1 {
         if io::stdin().is_terminal() && io::stdout().is_terminal() {
             let (stdin, mut stdout) = (io::stdin().lock(), anstream::stdout());
-            return served(interactive::run(
-                stdin,
-                &mut stdout,
-                system_zone(),
-                text::unicode(),
-            ));
+            let zone = system_zone();
+            return served(
+                interactive::run(stdin, &mut stdout, zone, text::unicode()),
+                false,
+            );
         }
         let e =
             Error::new("usage", "No expression given.").hint("Try: time-cron next \"0 9 * * 1-5\"");
@@ -167,8 +175,8 @@ fn main() -> ExitCode {
         Err(e) => e.exit(),
     };
     let (common, answer) = match &cli.command {
-        Some(Command::Mcp) => return served(mcp::serve()),
-        Some(Command::Ui(u)) => return served(ui::serve(u.port, !u.no_open)),
+        Some(Command::Mcp(d)) => return served(mcp::serve(), d.debug),
+        Some(Command::Ui(u)) => return served(ui::serve(u.port, !u.no_open), u.debug.debug),
         Some(Command::Explain(c)) => (
             c,
             c.expression()
@@ -204,10 +212,13 @@ fn main() -> ExitCode {
 }
 
 /// The exit of a face that runs until its input ends.
-fn served(result: Result<(), Error>) -> ExitCode {
+fn served(result: Result<(), Error>, debug: bool) -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
+            if debug {
+                eprintln!("debug: {e:?}");
+            }
             fail(&e);
             ExitCode::from(e.exit_code())
         }
