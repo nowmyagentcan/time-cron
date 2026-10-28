@@ -61,6 +61,7 @@ jobs:
             if [ "$t" = windows-x64 ]; then (cd "$n" && zip -q ../dist/"$n".zip *)
             else (cd "$n" && tar -czf ../dist/"$n".tar.gz *); fi
           done
+          for f in install.sh install.ps1; do sed "s/@VERSION@/$v/g" scripts/$f > dist/$f; done
           cd dist && sha256sum * > SHA256SUMS
       - uses: actions/upload-artifact@v7
         with:

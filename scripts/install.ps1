@@ -1,0 +1,34 @@
+# Installs time-cron @VERSION@ into %LOCALAPPDATA%\Programs\time-cron after checking the archive's SHA-256.
+# irm https://github.com/nowmyagentcan/time-cron/releases/latest/download/install.ps1 | iex
+& {
+  $ErrorActionPreference = 'Stop'
+  $ProgressPreference = 'SilentlyContinue'
+  $version = '@VERSION@'
+  $base = if ($env:TIME_CRON_BASE) { $env:TIME_CRON_BASE } else { "https://github.com/nowmyagentcan/time-cron/releases/download/$version" }
+  $archive = "time-cron-$version-windows-x64.zip"
+  $tmp = Join-Path ([IO.Path]::GetTempPath()) ([guid]::NewGuid())
+  New-Item -ItemType Directory $tmp | Out-Null
+  try {
+    Invoke-WebRequest "$base/$archive" -OutFile "$tmp\$archive" -UseBasicParsing
+    Invoke-WebRequest "$base/SHA256SUMS" -OutFile "$tmp\SHA256SUMS" -UseBasicParsing
+    $expected = Get-Content "$tmp\SHA256SUMS" | ForEach-Object { $hash, $name = -split $_; if ($name -eq $archive) { $hash } }
+    if (-not $expected -or (Get-FileHash "$tmp\$archive" -Algorithm SHA256).Hash -ne $expected) {
+      throw "time-cron: the SHA-256 of $archive doesn't match SHA256SUMS; nothing was installed."
+    }
+    Expand-Archive "$tmp\$archive" "$tmp\x"
+    $dir = Join-Path $env:LOCALAPPDATA 'Programs\time-cron'
+    New-Item -ItemType Directory -Force $dir | Out-Null
+    Copy-Item "$tmp\x\time-cron.exe" $dir -Force
+    $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+    $path = $key.GetValue('Path', '', 'DoNotExpandEnvironmentNames')
+    if (($path -split ';') -notcontains $dir) {
+      $key.SetValue('Path', "$path;$dir".TrimStart(';'), 'ExpandString')
+      # Clearing a user variable makes Windows tell open programs that the environment changed.
+      [Environment]::SetEnvironmentVariable('TIME_CRON_INSTALL', $null, 'User')
+      $env:Path += ";$dir"
+    }
+    & "$dir\time-cron.exe" --version
+  } finally {
+    Remove-Item -Recurse -Force $tmp
+  }
+}
