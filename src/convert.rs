@@ -32,8 +32,8 @@ pub fn convert(s: &Schedule, to: Dialect) -> Result<(Vec<String>, Vec<Warning>),
     Ok((results, warnings))
 }
 
-/// Re-reads each result and compares the first 100 runs after 2026-01-01 in UTC with the
-/// source's (the results' together, for a split). Returns the results' warnings about AWS
+/// Re-reads each result and compares the first 100 runs from 1970 in UTC with the source's
+/// (the results' together, for a split). Returns the results' warnings about AWS
 /// syntax that AWS doesn't document, the only ones the source can't have.
 fn check(s: &Schedule, to: Dialect, results: &[String]) -> Result<Vec<Warning>, Error> {
     let failed = || {
@@ -43,15 +43,11 @@ fn check(s: &Schedule, to: Dialect, results: &[String]) -> Result<Vec<Warning>, 
         )
         .hint("Please report this expression.")
     };
-    let runs = |s: &Schedule| {
-        let n = runs::next(s, Some("UTC"), Some("2026-01-01T00:00:00Z"), 100)?;
-        Ok::<_, Error>(n.runs.into_iter().map(|r| r.time.timestamp()))
-    };
-    let want: Vec<_> = runs(s)?.collect();
+    let want = runs::ever(s, 100)?;
     let (mut got, mut warnings) = (vec![], vec![]);
     for text in results {
         let result = parse(text, Some(to)).map_err(|_| failed())?;
-        got.extend(runs(&result).map_err(|_| failed())?);
+        got.extend(runs::ever(&result, 100).map_err(|_| failed())?);
         warnings.extend(
             lint(&result)
                 .into_iter()

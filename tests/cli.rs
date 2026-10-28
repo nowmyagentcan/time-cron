@@ -430,8 +430,8 @@ fn matches_every_description_golden() {
 #[test]
 #[rustfmt::skip]
 fn matches_every_conversion_golden() {
-    // Each result has passed the binary's own check: its first 100 UTC runs after
-    // 2026-01-01 equal the source's.
+    // Each result has passed the binary's own check: its first 100 UTC runs from
+    // 1970 equal the source's.
     let cases: &[(&str, &str, &[&str], &[&str])] = &[
         ("0 9 * * 1-5", "quartz", &["0 0 9 ? * MON-FRI"], &[]),
         ("0 9 * * 1-5", "aws", &["cron(0 9 ? * MON-FRI *)"], &[]),

@@ -214,7 +214,7 @@ pub fn answer(request: Value) -> Result<Value, Error> {
 fn runnable(expression: &str, dialect: Option<Dialect>) -> Result<Schedule, Error> {
     let s = parse(expression, dialect)?;
     if !s.reboot {
-        runs::next(&s, Some("UTC"), None, 1)?;
+        runs::ever(&s, 1)?;
     }
     Ok(s)
 }
@@ -397,8 +397,8 @@ mod tests {
         );
         assert_eq!(explain("0 0 30 2 *", None).unwrap_err().code, "never_runs");
         assert_eq!(
-            explain("0 0 1 1 ? 2020", None).unwrap_err().code,
-            "never_runs"
+            explain("0 0 1 1 ? 2020", None).unwrap().description,
+            "At 00:00, on January 1, in 2020."
         );
     }
 

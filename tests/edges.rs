@@ -180,7 +180,6 @@ fn converts_an_or_schedule_whose_day_of_month_never_occurs() {
 }
 
 #[test]
-#[ignore = "known bug: explain and convert search for a run after today"]
 fn explains_and_converts_schedules_that_ended_in_the_past() {
     let (code, v) = json(&["explain", "0 0 12 1 1 ? 2020"]);
     assert_eq!(

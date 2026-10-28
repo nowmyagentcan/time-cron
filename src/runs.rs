@@ -52,36 +52,7 @@ pub fn next(
     let mut warnings = vec![];
     let tz = zone(s, tz, &mut warnings)?;
     let from = start(from, &tz)?;
-    let mut runs: Vec<Run> = vec![];
-    let mut skipped = vec![];
-    // A fold across midnight can put a date's runs before the previous date's: start a day
-    // early, and stop once the next date can't hold an earlier run than the last one kept.
-    let mut days = days(s, from.date().yesterday().unwrap_or(from.date())).peekable();
-    while let Some(day) = days.next() {
-        let mut today = vec![];
-        for t in times(s) {
-            resolve(s, &tz, day.to_datetime(t), &mut today, &mut skipped);
-        }
-        // Only DST changes reorder runs; sorting would copy every run of the day.
-        if !today.is_sorted_by_key(|r| r.time.timestamp()) {
-            today.sort_by_key(|r| r.time.timestamp());
-        }
-        let later = |r: &Run| r.time.timestamp() > from.timestamp();
-        runs.extend(today.into_iter().filter(later).take(count));
-        if !runs.is_sorted_by_key(|r| r.time.timestamp()) {
-            runs.sort_by_key(|r| r.time.timestamp());
-        }
-        runs.truncate(count);
-        let last = runs.last().map(|r| r.time.timestamp());
-        let done = runs.len() == count
-            && days.peek().is_none_or(|d| {
-                let midnight = tz.to_ambiguous_timestamp(d.to_datetime(Time::midnight()));
-                midnight.earlier().ok() > last
-            });
-        if done {
-            break;
-        }
-    }
+    let (runs, skipped) = search(s, &tz, from.timestamp(), count);
     let Some(last) = runs.last().map(|r| r.time.timestamp()) else {
         return Err(never_runs(s, &from));
     };
@@ -109,6 +80,68 @@ pub fn next(
         skipped,
         warnings,
     })
+}
+
+/// The first `count` times the schedule matches from 1970 on, read in UTC so every wall time
+/// happens once, or `never_runs`: a schedule is judged by its calendar, not by today's date.
+pub fn ever(s: &Schedule, count: usize) -> Result<Vec<Timestamp>, Error> {
+    let start = Timestamp::UNIX_EPOCH;
+    let (runs, _) = search(
+        s,
+        &TimeZone::UTC,
+        start - SignedDuration::from_secs(1),
+        count,
+    );
+    if runs.is_empty() {
+        return Err(never_runs(s, &start.to_zoned(TimeZone::UTC)));
+    }
+    Ok(runs.into_iter().map(|r| r.time.timestamp()).collect())
+}
+
+/// The first `count` runs strictly after `from`, in time order, and the wall times skipped
+/// on the way, each with the instant of its jump.
+fn search(
+    s: &Schedule,
+    tz: &TimeZone,
+    from: Timestamp,
+    count: usize,
+) -> (Vec<Run>, Vec<(Timestamp, DateTime)>) {
+    let mut runs: Vec<Run> = vec![];
+    let mut skipped = vec![];
+    // A fold across midnight can put a date's runs before the previous date's: start a day
+    // early, and stop once the next date can't hold an earlier run than the last one kept.
+    let first = tz.to_datetime(from).date();
+    let mut days = days(s, first.yesterday().unwrap_or(first)).peekable();
+    while let Some(day) = days.next() {
+        let mut today = vec![];
+        for t in times(s) {
+            resolve(s, tz, day.to_datetime(t), &mut today, &mut skipped);
+        }
+        // Only DST changes reorder runs; sorting would copy every run of the day.
+        if !today.is_sorted_by_key(|r| r.time.timestamp()) {
+            today.sort_by_key(|r| r.time.timestamp());
+        }
+        runs.extend(
+            today
+                .into_iter()
+                .filter(|r| r.time.timestamp() > from)
+                .take(count),
+        );
+        if !runs.is_sorted_by_key(|r| r.time.timestamp()) {
+            runs.sort_by_key(|r| r.time.timestamp());
+        }
+        runs.truncate(count);
+        let last = runs.last().map(|r| r.time.timestamp());
+        let done = runs.len() == count
+            && days.peek().is_none_or(|d| {
+                let midnight = tz.to_ambiguous_timestamp(d.to_datetime(Time::midnight()));
+                midnight.earlier().ok() > last
+            });
+        if done {
+            break;
+        }
+    }
+    (runs, skipped)
 }
 
 /// One warning per zone transition in the 366 days after `from` whose gap or fold holds
