@@ -59,17 +59,21 @@ pub fn next(
         for t in times(s) {
             resolve(s, &tz, day.to_datetime(t), &mut today, &mut skipped);
         }
-        today.sort_by_key(|r| r.time.timestamp());
+        // Only DST changes reorder a day; sorting would copy every run of the day.
+        if !today.is_sorted_by_key(|r| r.time.timestamp()) {
+            today.sort_by_key(|r| r.time.timestamp());
+        }
+        let need = count - runs.len();
         runs.extend(
             today
                 .into_iter()
-                .filter(|r| r.time.timestamp() > from.timestamp()),
+                .filter(|r| r.time.timestamp() > from.timestamp())
+                .take(need),
         );
-        if runs.len() >= count {
+        if runs.len() == count {
             break;
         }
     }
-    runs.truncate(count);
     let Some(last) = runs.last().map(|r| r.time.timestamp()) else {
         return Err(never_runs(s, &from));
     };
