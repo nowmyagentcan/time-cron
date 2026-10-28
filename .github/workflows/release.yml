@@ -41,6 +41,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-about@0.9.3
       - uses: actions/download-artifact@v8
         with:
           path: bin
@@ -48,10 +52,11 @@ jobs:
         run: |
           v=v$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml)
           [ "$GITHUB_REF_TYPE" != tag ] || [ "$GITHUB_REF_NAME" = "$v" ]
+          cargo about generate --locked -c scripts/about.toml scripts/about.hbs -o THIRD-PARTY-LICENSES.txt
           mkdir dist
           for t in $(ls bin); do
             n=time-cron-$v-$t
-            mkdir "$n" && cp bin/$t/* LICENSE "$n"/ && chmod +x "$n"/time-cron*
+            mkdir "$n" && cp bin/$t/* LICENSE THIRD-PARTY-LICENSES.txt "$n"/ && chmod +x "$n"/time-cron*
             cp README.md "$n"/ 2>/dev/null || [ "$GITHUB_REF_TYPE" != tag ]
             if [ "$t" = windows-x64 ]; then (cd "$n" && zip -q ../dist/"$n".zip *)
             else (cd "$n" && tar -czf ../dist/"$n".tar.gz *); fi
