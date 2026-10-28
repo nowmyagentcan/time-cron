@@ -2,6 +2,7 @@ use jiff::civil::{Date, DateTime, Time, date};
 use jiff::tz::{self, AmbiguousOffset, Offset, TimeZone};
 use jiff::{SignedDuration, Timestamp, ToSpan, Zoned};
 
+use crate::describe::list;
 use crate::error::{Error, Warning};
 use crate::schedule::{DayRule, Dialect, Schedule};
 
@@ -137,7 +138,7 @@ fn dst_warnings(s: &Schedule, tz: &TimeZone, zone: &str, from: Timestamp) -> Vec
             if hit.len() > 3 {
                 shown.push(format!("{} more", hit.len() - 3));
             }
-            let times = and_list(shown.into_iter());
+            let times = list(shown, "and");
             let cronie = cronie(s, shift);
             let (date, was, now) = (lo.date(), hm(old), hm(new));
             Some(if shift > 0 {
@@ -337,24 +338,13 @@ fn missing_day(s: &Schedule) -> Option<String> {
         .month
         .iter()
         .map(|m| date(2000, m as i8, 1).strftime("%B").to_string());
-    let days_text = and_list(days.iter().map(u16::to_string));
-    let months_text = and_list(months);
+    let days_text = list(days.iter().map(u16::to_string), "and");
+    let months_text = list(months, "and");
     Some(if days.len() == 1 {
         format!("day {days_text} doesn't occur in {months_text}")
     } else {
         format!("days {days_text} don't occur in {months_text}")
     })
-}
-
-/// "a", "a and b", "a, b and c".
-fn and_list(items: impl Iterator<Item = String>) -> String {
-    let mut items: Vec<String> = items.collect();
-    let last = items.pop().unwrap_or_default();
-    if items.is_empty() {
-        last
-    } else {
-        format!("{} and {last}", items.join(", "))
-    }
 }
 
 #[cfg(test)]

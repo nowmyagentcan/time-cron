@@ -1,3 +1,4 @@
+pub mod describe;
 pub mod error;
 pub mod expr;
 pub mod runs;

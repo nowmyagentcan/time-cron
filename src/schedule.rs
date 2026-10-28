@@ -41,6 +41,18 @@ impl Kind {
             Kind::Year => "year",
         }
     }
+
+    /// The values the model holds (day of week 0-6, Sunday first).
+    pub fn range(self) -> (u16, u16) {
+        match self {
+            Kind::Second | Kind::Minute => (0, 59),
+            Kind::Hour => (0, 23),
+            Kind::DayOfMonth => (1, 31),
+            Kind::Month => (1, 12),
+            Kind::DayOfWeek => (0, 6),
+            Kind::Year => (1970, 2199),
+        }
+    }
 }
 
 /// One field as written (a nickname contributes its expansion).
@@ -184,6 +196,27 @@ pub struct Schedule {
 }
 
 impl Schedule {
+    /// The field as written, if the dialect has it.
+    pub fn field(&self, kind: Kind) -> Option<&Field> {
+        self.fields.iter().find(|f| f.kind == kind)
+    }
+
+    /// The values a field holds; day of week only when it is a plain set of days.
+    pub fn values(&self, kind: Kind) -> Vec<u16> {
+        match kind {
+            Kind::Second => self.second.iter().collect(),
+            Kind::Minute => self.minute.iter().collect(),
+            Kind::Hour => self.hour.iter().collect(),
+            Kind::DayOfMonth => self.dom.days.iter().collect(),
+            Kind::Month => self.month.iter().collect(),
+            Kind::DayOfWeek => match self.dow {
+                Dow::Days(set) => set.iter().collect(),
+                _ => vec![],
+            },
+            Kind::Year => self.year.iter().collect(),
+        }
+    }
+
     /// Whether the schedule runs at some time on this date.
     pub fn runs_on(&self, d: Date) -> bool {
         let (dom, dow) = (|| self.dom.matches(d), || self.dow.matches(d));
