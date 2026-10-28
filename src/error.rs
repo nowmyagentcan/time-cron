@@ -29,6 +29,22 @@ impl Error {
     }
 }
 
+/// Something worth knowing that doesn't stop the answer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Warning {
+    pub code: &'static str,
+    pub message: String,
+}
+
+impl Warning {
+    pub fn new(code: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::Error;
