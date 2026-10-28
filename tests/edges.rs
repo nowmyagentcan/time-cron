@@ -195,7 +195,6 @@ fn explains_and_converts_schedules_that_ended_in_the_past() {
 }
 
 #[test]
-#[ignore = "known bug: offsets with seconds are written as -00:44:30"]
 fn writes_every_time_as_rfc_3339() {
     let v = next("0 0 * * *", "Africa/Monrovia", "1971-01-01", "1");
     let rfc3339 = |s: &str| {

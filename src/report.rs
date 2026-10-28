@@ -2,6 +2,7 @@
 
 use jiff::Zoned;
 use jiff::civil::DateTime;
+use jiff::fmt::temporal::DateTimePrinter;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, Serializer};
 use serde_json::Value;
@@ -82,7 +83,7 @@ struct RunJson {
 impl Serialize for Run {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         RunJson {
-            time: self.time.strftime(RFC3339).to_string(),
+            time: rfc3339_text(&self.time),
             utc: self.time.timestamp().to_string(),
             dst: self.dst,
             scheduled: self.scheduled.map(|at| at.to_string()),
@@ -98,10 +99,16 @@ struct Skip {
     reason: &'static str,
 }
 
-const RFC3339: &str = "%Y-%m-%dT%H:%M:%S%:z";
+/// RFC 3339 to the second. As in jiff and Temporal, an offset with seconds (Monrovia's
+/// -00:44:30 until 1972) is rounded to the minute and the wall time kept.
+fn rfc3339_text(z: &Zoned) -> String {
+    DateTimePrinter::new()
+        .precision(Some(0))
+        .timestamp_with_offset_to_string(&z.timestamp(), z.offset())
+}
 
 fn rfc3339<S: Serializer>(z: &Zoned, s: S) -> Result<S::Ok, S::Error> {
-    s.collect_str(&z.strftime(RFC3339))
+    s.serialize_str(&rfc3339_text(z))
 }
 
 fn gap_skips<S: Serializer>(skipped: &[DateTime], s: S) -> Result<S::Ok, S::Error> {
