@@ -119,19 +119,12 @@ fn rewrite(s: &Schedule, to: Dialect) -> Result<Vec<String>, Error> {
             (dom(s, to, true), "?".into()),
             ("?".into(), dow(s, to, true)),
         ],
-        DayRule::And if to == Unix => {
-            let (mut d, mut w) = (dom(s, to, true), dow(s, to, true));
-            // Cron ANDs the day fields only while one starts with `*`: keep that one as written.
-            if !d.starts_with('*') && !w.starts_with('*') {
-                let text = |kind| s.field(kind).map_or("*", |f| &f.text).to_string();
-                if text(DayOfMonth).starts_with('*') {
-                    d = text(DayOfMonth);
-                } else {
-                    w = text(DayOfWeek);
-                }
-            }
-            vec![(d, w)]
-        }
+        // Cron ANDs the day fields only while one starts with `*`.
+        DayRule::And if to == Unix => vec![starred(
+            s,
+            [DayOfMonth, DayOfWeek],
+            (dom(s, to, true), dow(s, to, true)),
+        )],
         DayRule::And => {
             return Err(not(
                 "it needs both a day of month and a day of week to match, and Quartz and AWS can only use one".into(),
@@ -140,11 +133,17 @@ fn rewrite(s: &Schedule, to: Dialect) -> Result<Vec<String>, Error> {
         }
     };
 
-    // A Unix fixed-time job stays one, so cron keeps replaying its runs across DST changes.
+    // A Unix job keeps its DST class: cron replays a fixed-time job's runs across a shift,
+    // while a job whose minute or hour starts with `*` skips gaps and runs folds twice.
     let star = !(s.dialect == Unix && s.fixed_time);
     let second = field(&seconds, Second, to, true);
-    let minute = field(&s.values(Minute), Minute, to, star);
-    let hour = field(&s.values(Hour), Hour, to, star);
+    let (mut minute, mut hour) = (
+        field(&s.values(Minute), Minute, to, star),
+        field(&s.values(Hour), Hour, to, star),
+    );
+    if to == Unix && s.dialect == Unix && star {
+        (minute, hour) = starred(s, [Minute, Hour], (minute, hour));
+    }
     let month = field(&s.values(Month), Month, to, true);
     let write = |(d, w): (String, String)| match to {
         Unix => format!("{minute} {hour} {d} {month} {w}"),
@@ -153,6 +152,20 @@ fn rewrite(s: &Schedule, to: Dialect) -> Result<Vec<String>, Error> {
         Aws => format!("cron({minute} {hour} {d} {month} {w} {year})"),
     };
     Ok(days.into_iter().map(write).collect())
+}
+
+/// A written pair of Unix fields, with the source's field that starts with `*` put back as
+/// written when neither result kept a leading `*`, which cron reads as a different rule.
+fn starred(s: &Schedule, kinds: [Kind; 2], (a, b): (String, String)) -> (String, String) {
+    if a.starts_with('*') || b.starts_with('*') {
+        return (a, b);
+    }
+    let text = |kind| s.field(kind).map_or("*", |f| &f.text).to_string();
+    if text(kinds[0]).starts_with('*') {
+        (text(kinds[0]), b)
+    } else {
+        (a, text(kinds[1]))
+    }
 }
 
 /// Day of month: plain days, then `L`, `L-n`, `LW`, `L-nW` and `nW`.
@@ -327,6 +340,8 @@ mod tests {
             // A fixed-time job stays fixed-time; a wildcard one stays a wildcard.
             ("0,20,40 2 * * *", Unix, "0-40/20 2 * * *"),
             ("0 0/20 2 * * ?", Unix, "*/20 2 * * *"),
+            ("*/30 2 * * *", Unix, "*/30 2 * * *"),
+            ("0 */12 * * *", Unix, "0 */12 * * *"),
             ("cron(0 12 1 1 ? 2026/4)", Quartz, "0 0 12 1 1 ? 2026/4"),
         ];
         for &(text, dialect, want) in cases {

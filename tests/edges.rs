@@ -127,7 +127,6 @@ fn gives_the_same_answer_to_concurrent_runs() {
 }
 
 #[test]
-#[ignore = "known bug: same-dialect output drops the leading * that decides cron's DST rule"]
 fn converting_to_unix_keeps_the_dst_behaviour() {
     for (expr, tz, from) in [
         ("*/30 2 * * *", NY, SPRING),
