@@ -43,7 +43,7 @@ pub fn explained(e: &Explained) -> String {
 
 pub fn upcoming(u: &Upcoming) -> String {
     let rules = match u.dialect {
-        Dialect::Unix => "Unix cron",
+        Dialect::Unix => "Unix cron (cronie)",
         Dialect::Quartz => "Quartz",
         Dialect::Aws => "EventBridge",
     };
@@ -168,7 +168,10 @@ mod tests {
         let e = next("0 0 30 2 *", None, Some("UTC"), None, 1).unwrap_err();
         assert!(ascii(&plain(error(&e))).starts_with("x This schedule"));
         let u = next("@daily", None, Some("UTC"), None, 1).unwrap();
-        assert!(ascii(&plain(upcoming(&u))).contains("\nUTC - tzdata 2026f - Unix cron rules\n"));
+        assert!(
+            ascii(&plain(upcoming(&u)))
+                .contains("\nUTC - tzdata 2026f - Unix cron (cronie) rules\n")
+        );
     }
 
     #[test]
@@ -194,7 +197,7 @@ Dialect: unix (5 fields)
         assert_eq!(
             plain(upcoming(&u)),
             "At 02:30 every day.
-America/New_York · tzdata 2026f · Unix cron rules
+America/New_York · tzdata 2026f · Unix cron (cronie) rules
   Sun 2027-03-14 03:00 -04:00  moved from 02:30
   Mon 2027-03-15 02:30 -04:00
   Tue 2027-03-16 02:30 -04:00

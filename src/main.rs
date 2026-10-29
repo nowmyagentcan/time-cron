@@ -24,6 +24,20 @@ const EXAMPLES: &str = "\x1b[1;4mExamples:\x1b[0m
   time-cron convert \"*/15 9-17 * * 1-5\" --to quartz
   time-cron ui";
 
+/// `next` help: each scheduler's daylight-saving rules, then the examples.
+static NEXT_HELP: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "\x1b[1;4mDaylight saving:\x1b[0m
+  unix (cronie)  A job at a fixed minute and hour runs a time in a gap right after the jump
+                 and a repeated time once, for shifts up to 3 hours; a job whose minute or
+                 hour starts with * skips the gap and runs the repeated time twice.
+  quartz         Skips a gap; runs a repeated time once, the second time.
+  aws            Skips a gap; runs a repeated time once, the first time.
+
+{EXAMPLES}"
+    )
+});
+
 #[derive(Parser)]
 #[command(
     name = "time-cron",
@@ -31,7 +45,7 @@ const EXAMPLES: &str = "\x1b[1;4mExamples:\x1b[0m
     about = text::SENTENCE,
     version = VERSION.as_str(),
     override_usage = "time-cron [COMMAND] [EXPR]...",
-    after_help = EXAMPLES,
+    after_help = NEXT_HELP.as_str(),
     args_conflicts_with_subcommands = true,
     disable_help_subcommand = true
 )]
@@ -48,7 +62,7 @@ enum Command {
     #[command(after_help = EXAMPLES)]
     Explain(Common),
     /// List the next run times (the default command)
-    #[command(after_help = EXAMPLES)]
+    #[command(after_help = NEXT_HELP.as_str())]
     Next(NextArgs),
     /// Rewrite the expression for unix, quartz or aws
     #[command(after_help = EXAMPLES)]
@@ -93,7 +107,7 @@ struct ConvertArgs {
 struct Common {
     /// The cron expression, quoted (separate words are joined with spaces)
     expr: Vec<String>,
-    /// Auto, unix, quartz or aws
+    /// Auto, unix (cronie), quartz or aws
     #[arg(
         long,
         value_name = "D",
@@ -129,7 +143,7 @@ struct NextArgs {
     /// IANA time zone [default: this computer's; UTC for aws]
     #[arg(long, value_name = "ZONE")]
     tz: Option<String>,
-    /// Start after this time [default: now]
+    /// Start after: 2026-11-01, 2026-11-01T09:00 (in --tz) or 2026-11-01T09:00:00Z [default: now]
     #[arg(long, value_name = "TIME")]
     from: Option<String>,
     /// Number of runs, 1-1000

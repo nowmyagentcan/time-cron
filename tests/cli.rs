@@ -188,6 +188,25 @@ fn shows_examples_in_help() {
     let (_, out, _) = run(&["--help"]);
     assert!(out.starts_with("Explain a cron schedule and see exactly when it runs.\n\nUsage: time-cron [COMMAND] [EXPR]...\n"));
     assert!(out.contains("--count <N>    Number of runs, 1-1000 [default: 5]"));
+    // Help names the start-time forms and the Unix cron it follows, so nobody has to guess.
+    for args in [&["--help"][..], &["next", "--help"]] {
+        let (_, out, _) = run(args);
+        assert!(out.contains("--dialect <D>  Auto, unix (cronie), quartz or aws [default: auto]"));
+        assert!(out.contains("--from <TIME>  Start after: 2026-11-01, 2026-11-01T09:00 (in --tz) or 2026-11-01T09:00:00Z [default: now]"), "{out}");
+        assert!(
+            out.contains(
+                "Daylight saving:
+  unix (cronie)  A job at a fixed minute and hour runs a time in a gap right after the jump
+                 and a repeated time once, for shifts up to 3 hours; a job whose minute or
+                 hour starts with * skips the gap and runs the repeated time twice.
+  quartz         Skips a gap; runs a repeated time once, the second time.
+  aws            Skips a gap; runs a repeated time once, the first time.
+
+Examples:"
+            ),
+            "{out}"
+        );
+    }
 }
 
 #[test]
@@ -319,7 +338,7 @@ fn prints_next_runs_as_text() {
     let gap = "clocks jump from 02:00 to 03:00 in America/New_York. Cron runs 02:30 right after the jump.";
     let want = format!(
         "At 02:30 every day.
-America/New_York - tzdata 2026f - Unix cron rules
+America/New_York - tzdata 2026f - Unix cron (cronie) rules
   Sun 2027-03-14 03:00 -04:00  moved from 02:30
   Mon 2027-03-15 02:30 -04:00
   Tue 2027-03-16 02:30 -04:00
