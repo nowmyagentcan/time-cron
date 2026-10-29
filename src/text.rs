@@ -223,7 +223,7 @@ America/New_York · tzdata 2026f · Unix cron rules
         assert_eq!(
             plain(notes(&c)),
             "At 00:00, on day 1 and 15 of the month, or on Friday.
-! Quartz can't match day of month OR day of week in one expression, so this needs two triggers.
+! Quartz can't match day of month OR day of week in one expression, so this needs two triggers. A day that matches both runs the job twice unless the job skips the repeat.
 ! DST rules differ: Quartz skips times in a gap and runs a repeated time once, the second time, while Unix cron runs a time in a gap right after the jump and a repeated time once, the first time, when clocks change by up to 3 hours.
 "
         );

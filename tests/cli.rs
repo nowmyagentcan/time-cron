@@ -455,7 +455,7 @@ fn matches_every_conversion_golden() {
         assert_eq!((&v["expression"], &v["to"]), (&json!(expr), &json!(to)));
     }
     let (_, v) = json(&["convert", "0 0 1,15 * FRI", "--to", "aws"]);
-    assert_eq!(v["warnings"][0]["message"], "AWS cron can't match day of month OR day of week in one expression, so this needs two rules or schedules.");
+    assert_eq!(v["warnings"][0]["message"], "AWS cron can't match day of month OR day of week in one expression, so this needs two rules or schedules. A day that matches both runs the job twice unless the job skips the repeat.");
 }
 
 #[test]
@@ -465,7 +465,7 @@ fn prints_only_the_converted_expressions_on_stdout() {
     assert_eq!(
         err,
         "At 00:00, on day 1 and 15 of the month, or on Friday.
-! Quartz can't match day of month OR day of week in one expression, so this needs two triggers.
+! Quartz can't match day of month OR day of week in one expression, so this needs two triggers. A day that matches both runs the job twice unless the job skips the repeat.
 ! DST rules differ: Quartz skips times in a gap and runs a repeated time once, the second time, while Unix cron runs a time in a gap right after the jump and a repeated time once, the first time, when clocks change by up to 3 hours.
 "
     );

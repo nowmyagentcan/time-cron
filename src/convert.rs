@@ -25,7 +25,7 @@ pub fn convert(s: &Schedule, to: Dialect) -> Result<(Vec<String>, Vec<Warning>),
         warnings.push(Warning::new(
             "split",
             format!(
-                "{} can't match day of month OR day of week in one expression, so this needs two {many}.",
+                "{} can't match day of month OR day of week in one expression, so this needs two {many}. A day that matches both runs the job twice unless the job skips the repeat.",
                 to.title()
             ),
         ));
@@ -270,13 +270,14 @@ mod tests {
     #[test]
     fn warns_about_splits_and_undocumented_aws_syntax() {
         let split = "can't match day of month OR day of week in one expression, so this needs two";
+        let twice = "A day that matches both runs the job twice unless the job skips the repeat.";
         assert_eq!(
             warnings("0 0 1,15 * FRI", Quartz),
-            [format!("Quartz {split} triggers.")]
+            [format!("Quartz {split} triggers. {twice}")]
         );
         assert_eq!(
-            warnings("0 0 1,15 * FRI", Aws),
-            [format!("AWS cron {split} rules or schedules.")]
+            warnings("0 9 1 * MON", Aws),
+            [format!("AWS cron {split} rules or schedules. {twice}")]
         );
         assert_eq!(
             warnings("0 0 9 LW * ?", Aws),
