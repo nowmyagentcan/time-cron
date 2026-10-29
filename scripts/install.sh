@@ -23,6 +23,11 @@ if [ -z "$expected" ] || [ "${actual%% *}" != "$expected" ]; then
   exit 1
 fi
 tar -xzf "$tmp/$archive" -C "$tmp" time-cron
+# An empty file "runs" as an empty script, so the answer is checked too.
+case $("$tmp/time-cron" --version 2>/dev/null || :) in
+  "time-cron "*) ;;
+  *) echo "time-cron: $archive has no time-cron that runs here; nothing was installed." >&2; exit 1 ;;
+esac
 dir=$HOME/.local/bin
 mkdir -p "$dir"
 mv "$tmp/time-cron" "$dir/time-cron"

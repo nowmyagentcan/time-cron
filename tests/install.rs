@@ -83,7 +83,6 @@ fn installs_and_keeps_the_installed_copy_when_an_archive_is_bad() {
 }
 
 #[test]
-#[ignore = "known bug: install.sh replaces the installed copy before checking that the new one runs"]
 fn keeps_the_installed_copy_when_the_new_one_does_not_run() {
     let good = fs::read(BIN).unwrap();
     let payloads = [

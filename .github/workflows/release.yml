@@ -141,17 +141,27 @@ jobs:
           powershell -NoProfile -File dist/install.ps1
           if ($LASTEXITCODE) { throw 'upgrade failed while time-cron ran' }
           Stop-Process $p.Id; $p.WaitForExit()
+          # Other files in the folder stay.
+          Set-Content "$dir\notes.old" 'kept'
           powershell -NoProfile -File dist/install.ps1
-          if ($LASTEXITCODE -or (Get-ChildItem $dir).Count -ne 1) { throw 'moved copy left behind' }
-          # An upgrade from an archive without time-cron.exe fails and keeps the installed one.
+          $files = (Get-ChildItem $dir -Name) -join ','
+          if ($LASTEXITCODE -or $files -ne 'notes.old,time-cron.exe') { throw "left $files" }
+          Remove-Item "$dir\notes.old"
+          # An upgrade from an archive without time-cron.exe, or with one that doesn't run,
+          # fails and keeps the installed one.
           $zip = (Get-Item dist/*-windows-x64.zip).Name
-          New-Item -ItemType Directory empty | Out-Null
-          Compress-Archive dist/SHA256SUMS "empty/$zip"
-          "$((Get-FileHash "empty/$zip").Hash)  $zip" | Set-Content empty/SHA256SUMS
-          $env:TIME_CRON_BASE = 'http://127.0.0.1:8765/empty'
-          powershell -NoProfile -File dist/install.ps1
-          if (!$LASTEXITCODE -or (Get-ChildItem $dir).Count -ne 1) { throw 'a failed upgrade lost time-cron.exe' }
-          & "$dir\time-cron.exe" --version
+          New-Item -ItemType Directory missing, invalid, payload | Out-Null
+          Compress-Archive dist/SHA256SUMS "missing/$zip"
+          [IO.File]::WriteAllBytes("$PWD/payload/time-cron.exe", [byte[]](0, 1, 2, 3))
+          Compress-Archive payload/time-cron.exe "invalid/$zip"
+          foreach ($case in 'missing', 'invalid') {
+            "$((Get-FileHash "$case/$zip").Hash)  $zip" | Set-Content "$case/SHA256SUMS"
+            $env:TIME_CRON_BASE = "http://127.0.0.1:8765/$case"
+            powershell -NoProfile -File dist/install.ps1
+            if (!$LASTEXITCODE -or (Get-ChildItem $dir).Count -ne 1) { throw "a failed upgrade ($case) lost time-cron.exe" }
+            & "$dir\time-cron.exe" --version
+            if ($LASTEXITCODE) { throw "time-cron.exe doesn't run after the $case upgrade" }
+          }
   release:
     if: github.ref_type == 'tag'
     needs: smoke

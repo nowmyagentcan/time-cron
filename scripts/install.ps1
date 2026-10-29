@@ -16,6 +16,10 @@
       throw "time-cron: the SHA-256 of $archive doesn't match SHA256SUMS; nothing was installed."
     }
     Expand-Archive "$tmp\$archive" "$tmp\x"
+    $new = try { & "$tmp\x\time-cron.exe" --version } catch { }
+    if ("$new" -notlike 'time-cron *') {
+      throw "time-cron: $archive has no time-cron.exe that runs here; nothing was installed."
+    }
     $dir = Join-Path $env:LOCALAPPDATA 'Programs\time-cron'
     New-Item -ItemType Directory -Force $dir | Out-Null
     $exe = Join-Path $dir 'time-cron.exe'
@@ -26,7 +30,7 @@
     if (Test-Path $exe) { Move-Item $exe $old }
     try { Copy-Item "$tmp\x\time-cron.exe" $dir }
     catch { if (Test-Path $old) { Move-Item -Force $old $exe }; throw }
-    Remove-Item "$dir\*.old" -ErrorAction SilentlyContinue
+    Remove-Item "$exe.*.old" -ErrorAction SilentlyContinue
     $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
     $path = $key.GetValue('Path', '', 'DoNotExpandEnvironmentNames')
     if (($path -split ';') -notcontains $dir) {
