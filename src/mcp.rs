@@ -12,13 +12,20 @@ use serde_json::Value;
 use crate::error::Error;
 use crate::report::{self, ConvertArgs, Converted, Explained, NextArgs, Source, Upcoming};
 
+/// How every tool reports bad input, appended to each description.
+macro_rules! on_error {
+    () => {
+        " On bad input the result has isError true and one text block holding {\"error\":{\"code\",\"message\",\"hint\"}}, hint null when there is none."
+    };
+}
+
 #[derive(Clone)]
 struct Server;
 
 #[tool_router]
 impl Server {
     #[tool(
-        description = "Explain a cron expression in plain English and flag likely mistakes. Reads Unix cron (5 fields), Quartz (6-7 fields, seconds first) and AWS EventBridge cron(...) (6 fields with year); the dialect is detected unless given. Returns the description, each field's meaning and warnings.",
+        description = concat!("Explain a cron expression in plain English and flag likely mistakes. Reads Unix cron (5 fields), Quartz (6-7 fields, seconds first) and AWS EventBridge cron(...) (6 fields with year); the dialect is detected unless given. Returns the description, each field's meaning and warnings.", on_error!()),
         input_schema = input::<Source>(),
         output_schema = schema_for_output::<Explained>(),
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
@@ -28,7 +35,7 @@ impl Server {
     }
 
     #[tool(
-        description = "List the next run times of a cron expression in an IANA time zone, following the scheduler's own daylight-saving rules (cronie for Unix, Quartz, EventBridge Scheduler). Returns times with offsets and in UTC, runs moved or skipped by DST, and warnings.",
+        description = concat!("List the next run times of a cron expression in an IANA time zone, following the scheduler's own daylight-saving rules (cronie for Unix, Quartz, EventBridge Scheduler). Returns times with offsets and in UTC, runs moved or skipped by DST, and warnings.", on_error!()),
         input_schema = input::<NextArgs>(),
         output_schema = schema_for_output::<Upcoming>(),
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
@@ -38,7 +45,7 @@ impl Server {
     }
 
     #[tool(
-        description = "Convert a cron expression between Unix cron, Quartz and AWS EventBridge. Returns one expression, two when the target needs separate day-of-month and day-of-week triggers, or an error saying what the target can't express.",
+        description = concat!("Convert a cron expression between Unix cron, Quartz and AWS EventBridge. Returns one expression, two when the target needs separate day-of-month and day-of-week triggers, or an error saying what the target can't express.", on_error!()),
         input_schema = input::<ConvertArgs>(),
         output_schema = schema_for_output::<Converted>(),
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)

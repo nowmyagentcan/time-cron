@@ -86,6 +86,12 @@ fn check_tools(list: &Value) {
             t["description"].as_str().unwrap().starts_with(start),
             "{name}"
         );
+        // The error shape is documented where agents read it, since errors carry no
+        // structured content (clients check structured content against the output schema).
+        assert!(
+            t["description"].as_str().unwrap().ends_with(" On bad input the result has isError true and one text block holding {\"error\":{\"code\",\"message\",\"hint\"}}, hint null when there is none."),
+            "{name}"
+        );
         assert_eq!(
             t["annotations"],
             json!({"readOnlyHint": true, "idempotentHint": true, "openWorldHint": false})
