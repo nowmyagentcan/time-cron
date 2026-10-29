@@ -99,12 +99,13 @@ fn handle(stream: &TcpStream, port: u16) -> io::Result<()> {
 }
 
 fn respond(reader: &mut BufReader<io::Take<&TcpStream>>, port: u16) -> io::Result<Response> {
-    let (mut request, mut line) = (String::new(), String::new());
-    reader.read_line(&mut request)?;
+    // Lines are bytes: a header value may carry opaque ones (RFC 9110 §5.5).
+    let (mut request, mut line) = (Vec::new(), Vec::new());
+    reader.read_until(b'\n', &mut request)?;
     let (mut host, mut origin, mut length) = (None, None, None);
     loop {
         line.clear();
-        if reader.read_line(&mut line)? == 0 {
+        if reader.read_until(b'\n', &mut line)? == 0 {
             return Ok(match reader.get_ref().limit() {
                 0 => error(
                     413,
@@ -114,23 +115,27 @@ fn respond(reader: &mut BufReader<io::Take<&TcpStream>>, port: u16) -> io::Resul
                 _ => error(400, "bad_request", "The request ended early."),
             });
         }
-        if line.trim_end_matches(['\r', '\n']).is_empty() {
+        if line.iter().all(|b| b"\r\n".contains(b)) {
             break;
         }
-        let token = |n: &str| {
+        let token = |n: &[u8]| {
             !n.is_empty()
-                && n.bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b))
+                && n.iter()
+                    .all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(b))
         };
-        let Some((name, value)) = line.split_once(':').filter(|(n, _)| token(n)) else {
+        let Some(colon) = line
+            .iter()
+            .position(|&b| b == b':')
+            .filter(|&i| token(&line[..i]))
+        else {
             return Ok(error(400, "bad_request", "Can't read a request header."));
         };
-        let field = match name.to_ascii_lowercase().as_str() {
-            "host" => &mut host,
-            "origin" => &mut origin,
-            "content-length" => &mut length,
+        let field = match line[..colon].to_ascii_lowercase().as_slice() {
+            b"host" => &mut host,
+            b"origin" => &mut origin,
+            b"content-length" => &mut length,
             // Bodies come only with a Content-Length; chunked ones aren't read.
-            "transfer-encoding" => {
+            b"transfer-encoding" => {
                 return Ok(error(
                     400,
                     "bad_request",
@@ -139,12 +144,18 @@ fn respond(reader: &mut BufReader<io::Take<&TcpStream>>, port: u16) -> io::Resul
             }
             _ => continue,
         };
+        let value = String::from_utf8_lossy(&line[colon + 1..]);
         // A second value could disagree with the first one checked (RFC 9112 §3.2, §6.3).
         if field.replace(value.trim().to_owned()).is_some() {
             return Ok(error(400, "bad_request", "A request header is repeated."));
         }
     }
-    let mut parts = request.trim_end_matches(['\r', '\n']).split(' ');
+    // RFC 9112 §3: the request line is ASCII.
+    let request = std::str::from_utf8(&request).ok().filter(|r| r.is_ascii());
+    let mut parts = request
+        .unwrap_or_default()
+        .trim_end_matches(['\r', '\n'])
+        .split(' ');
     let (Some(method), Some(target), Some("HTTP/1.1" | "HTTP/1.0"), None) =
         (parts.next(), parts.next(), parts.next(), parts.next())
     else {

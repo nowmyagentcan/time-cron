@@ -368,7 +368,6 @@ fn refuses_malformed_header_names_framing_and_request_lines() {
 }
 
 #[test]
-#[ignore = "known bug: a byte that isn't UTF-8 in the request line or a header drops the connection"]
 fn reads_header_bytes_that_are_not_utf_8() {
     let server = Server::start(&["--no-open"]);
     let body = r#"{"op":"explain","expression":"@daily"}"#;
