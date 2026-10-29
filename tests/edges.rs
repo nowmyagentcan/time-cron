@@ -474,3 +474,55 @@ fn warns_that_dst_handling_changes_across_dialects() {
         assert!(!codes(&v).is_empty(), "{expr} -> {to}: {v}");
     }
 }
+
+#[test]
+fn converted_results_together_give_the_source_runs_from_1970_to_2199() {
+    let runs = |expr: &str, from: &str| {
+        let (code, v) = json(&["next", expr, "--tz", UTC, "--from", from, "--count", "150"]);
+        // A result that never runs adds nothing to the union.
+        let utc = if code == 0 {
+            strings(&v, "runs", "utc")
+        } else {
+            vec![]
+        };
+        utc.into_iter().map(String::from).collect::<Vec<_>>()
+    };
+    for expr in [
+        "0 0 1,15 * FRI",
+        "*/20 9-17 * * 1-5",
+        "30 6 */10 2,8 *",
+        "0 0 12 L * ?",
+        "0 15 10 ? * 6#3",
+        "0 0 9 15W * ?",
+        "cron(0 8 ? * MON-FRI *)",
+        "cron(0 0 L * ? *)",
+    ] {
+        for to in ["unix", "quartz", "aws"] {
+            let (code, v) = json(&["convert", expr, "--to", to]);
+            if code != 0 {
+                continue;
+            }
+            for from in [
+                "1970-01-01T00:00:00Z",
+                START,
+                "2099-12-01T00:00:00Z",
+                "2199-06-01T00:00:00Z",
+            ] {
+                let mut union: Vec<String> = v["results"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .flat_map(|r| runs(r.as_str().unwrap(), from))
+                    .collect();
+                union.sort();
+                union.dedup();
+                let source = runs(expr, from);
+                assert_eq!(
+                    union[..source.len()],
+                    source[..],
+                    "{expr} -> {to} from {from}"
+                );
+            }
+        }
+    }
+}

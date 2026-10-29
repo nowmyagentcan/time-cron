@@ -366,3 +366,32 @@ fn refuses_malformed_header_names_framing_and_request_lines() {
         assert!(status >= 400, "{head}: {status}");
     }
 }
+
+#[test]
+#[ignore = "known bug: a byte that isn't UTF-8 in the request line or a header drops the connection"]
+fn reads_header_bytes_that_are_not_utf_8() {
+    let server = Server::start(&["--no-open"]);
+    let body = r#"{"op":"explain","expression":"@daily"}"#;
+    let status = |line: &[u8], header: &[u8]| {
+        let mut stream = TcpStream::connect(("127.0.0.1", server.port)).unwrap();
+        let host = format!(
+            "\r\nHost: 127.0.0.1:{}\r\nContent-Length: {}\r\n",
+            server.port,
+            body.len()
+        );
+        let request = [line, host.as_bytes(), header, b"\r\n\r\n", body.as_bytes()].concat();
+        stream.write_all(&request).unwrap();
+        let mut response = Vec::new();
+        // A server that drops the request may reset the connection; that reads as no status.
+        let _ = stream.read_to_end(&mut response);
+        String::from_utf8_lossy(response.get(9..12).unwrap_or_default()).into_owned()
+    };
+    let post = b"POST /api HTTP/1.1".as_slice();
+    // RFC 9110 §5.5: field values may carry opaque bytes 80-FF; an unknown field is ignored.
+    for byte in [0x80, 0xe9, 0xff] {
+        assert_eq!(status(post, &[b"X-Other: ", &[byte][..]].concat()), "200");
+    }
+    assert_eq!(status(post, b"\xe9: x"), "400");
+    assert_eq!(status(b"POST /api\xe9 HTTP/1.1", b"X-Other: a"), "400");
+    assert_eq!(status(post, b"X-Other: a"), "200");
+}
