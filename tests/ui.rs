@@ -190,6 +190,11 @@ fn refuses_other_hosts_origins_routes_and_large_requests() {
     let other = server.port.wrapping_add(1);
     for (head, status) in [
         ("GET / HTTP/1.1\r\nHost: localhost:{port}".to_owned(), 200),
+        (
+            "GET /?from=bookmark HTTP/1.1\r\nHost: localhost:{port}".into(),
+            200,
+        ),
+        ("GET /api?x HTTP/1.1\r\nHost: localhost:{port}".into(), 404),
         ("GET / HTTP/1.1".into(), 403),
         ("GET / HTTP/1.1\r\nHost: evil.example".into(), 403),
         ("GET / HTTP/1.1\r\nHost: evil.example:{port}".into(), 403),

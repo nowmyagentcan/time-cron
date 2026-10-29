@@ -162,7 +162,8 @@ fn respond(reader: &mut BufReader<io::Take<&TcpStream>>, port: u16) -> io::Resul
             "Only this computer's page can use time-cron ui.",
         ));
     }
-    match (method, target) {
+    let path = target.split_once('?').map_or(target, |(path, _)| path);
+    match (method, path) {
         ("GET", "/") => Ok((200, "text/html; charset=utf-8", PAGE.into())),
         ("POST", "/api") => {
             // Digits only: Rust would also read a leading `+`.
