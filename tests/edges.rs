@@ -4,6 +4,7 @@
 use std::process::{Command, Stdio};
 use std::thread;
 
+use jiff::civil::{Date, Weekday};
 use serde_json::Value;
 
 const UTC: &str = "UTC";
@@ -240,14 +241,17 @@ fn takes_debug_on_every_command() {
     assert!(!String::from_utf8_lossy(&out.stderr).contains("'--debug'"));
 }
 
+/// A number below `n` from a xorshift seed.
+fn roll(seed: &mut u64, n: u16) -> u16 {
+    *seed ^= *seed << 13;
+    *seed ^= *seed >> 7;
+    *seed ^= *seed << 17;
+    (*seed % u64::from(n)) as u16
+}
+
 /// A field of a random Unix expression: its text and the values it matches.
 fn random_field(seed: &mut u64, lo: u16, hi: u16) -> (String, Vec<u16>) {
-    let mut roll = |n: u16| {
-        *seed ^= *seed << 13;
-        *seed ^= *seed >> 7;
-        *seed ^= *seed << 17;
-        (*seed % u64::from(n)) as u16
-    };
+    let mut roll = |n: u16| roll(seed, n);
     let span = hi - lo + 1;
     let a = lo + roll(span);
     let b = a + roll(hi - a + 1);
@@ -320,6 +324,79 @@ fn matches_an_independent_reading_of_unix_cron() {
     }
 }
 
+/// Quartz `nW`: the day of the weekday nearest day `n` of `d`'s month, if it has day `n`.
+fn nearest_weekday(d: Date, n: i8) -> Option<i8> {
+    Some(match Date::new(d.year(), d.month(), n).ok()?.weekday() {
+        Weekday::Saturday if n == 1 => 3,
+        Weekday::Saturday => n - 1,
+        Weekday::Sunday if n == d.days_in_month() => n - 2,
+        Weekday::Sunday => n + 1,
+        _ => n,
+    })
+}
+
+type Days = Box<dyn Fn(Date) -> bool>;
+
+/// Random Quartz day-of-month and day-of-week fields (one of them `?`) and the days they match.
+#[rustfmt::skip]
+fn random_days(seed: &mut u64) -> (String, String, Days) {
+    let mut r = |n: u16| roll(seed, n) as i8;
+    let (a, b, n) = (1 + r(31), 1 + r(31), r(31));
+    let (lo, hi) = (a.min(b), a.max(b));
+    let (v, w, k) = (1 + r(7), 1 + r(7), 1 + r(5));
+    let (first, last) = (v.min(w), v.max(w));
+    let weekday = |d: Date| d.weekday().to_sunday_one_offset();
+    let q = "?".to_string();
+    match r(12) {
+        0 => (lo.to_string(), q, Box::new(move |d| d.day() == lo)),
+        1 => (format!("{lo}-{hi}"), q, Box::new(move |d| (lo..=hi).contains(&d.day()))),
+        2 => (format!("{lo}/{k}"), q, Box::new(move |d| d.day() >= lo && (d.day() - lo) % k == 0)),
+        3 => ("L".into(), q, Box::new(|d| d.day() == d.days_in_month())),
+        4 => (format!("L-{n}"), q, Box::new(move |d| d.day() == d.days_in_month() - n)),
+        5 => (format!("{lo}W"), q, Box::new(move |d| Some(d.day()) == nearest_weekday(d, lo))),
+        6 => ("LW".into(), q, Box::new(|d| Some(d.day()) == nearest_weekday(d, d.days_in_month()))),
+        7 => (q, v.to_string(), Box::new(move |d| weekday(d) == v)),
+        8 => (q, format!("{first}-{last}"), Box::new(move |d| (first..=last).contains(&weekday(d)))),
+        9 => (q, format!("{v}L"), Box::new(move |d| weekday(d) == v && d.day() + 7 > d.days_in_month())),
+        10 => (q, format!("{v}#{k}"), Box::new(move |d| weekday(d) == v && (d.day() - 1) / 7 + 1 == k)),
+        _ => (q, "L".into(), Box::new(move |d| weekday(d) == 7)),
+    }
+}
+
+/// Generated Quartz and AWS schedules with L, W and # agree with a day-by-day reading in UTC.
+#[test]
+#[rustfmt::skip]
+fn matches_an_independent_reading_of_quartz_and_aws_days() {
+    let mut seed = 0x0dd_da75_u64;
+    for _ in 0..100 {
+        let (dom, dow, on_day) = random_days(&mut seed);
+        let (m1, m2) = (1 + roll(&mut seed, 12), 1 + roll(&mut seed, 12));
+        let months = if m1 == m2 { "*".to_string() } else { format!("{}-{}", m1.min(m2), m1.max(m2)) };
+        let on_month = |d: Date| months == "*" || (m1.min(m2)..=m1.max(m2)).contains(&(d.month() as u16));
+        let (minute, hour) = (roll(&mut seed, 60), roll(&mut seed, 24));
+        let mut want = vec![];
+        let mut day = jiff::civil::date(2026, 10, 29);
+        while want.len() < 12 && day.year() < 2200 {
+            if on_month(day) && on_day(day) && (day, hour, minute) != (jiff::civil::date(2026, 10, 29), 0, 0) {
+                want.push(format!("{day}T{hour:02}:{minute:02}:00Z"));
+            }
+            day = day.tomorrow().unwrap();
+        }
+        for expr in [
+            format!("0 {minute} {hour} {dom} {months} {dow}"),
+            format!("cron({minute} {hour} {dom} {months} {dow} *)"),
+        ] {
+            let (code, v) = json(&["next", &expr, "--tz", UTC, "--from", START, "--count", "12"]);
+            if want.is_empty() {
+                assert_eq!((code, &v["error"]["code"]), (1, &"never_runs".into()), "{expr}");
+            } else {
+                assert_eq!(code, 0, "{expr}: {v}");
+                assert_eq!(strings(&v, "runs", "utc"), want, "{expr}");
+            }
+        }
+    }
+}
+
 #[test]
 fn lists_the_same_first_runs_whatever_the_count() {
     for (expr, tz, from) in [
@@ -356,11 +433,26 @@ fn every_time_names_the_same_instant_as_its_utc() {
         s.parse::<jiff::Timestamp>()
             .unwrap_or_else(|e| panic!("{s}: {e}"))
     };
-    for from in ["1971-01-01", "1971-06-01T00:00:00Z", "1972-01-06T12:00"] {
-        let v = next("0 0 * * *", "Africa/Monrovia", from, "3");
+    for (expr, tz, from) in [
+        ("0 0 * * *", "Africa/Monrovia", "1971-01-01"),
+        ("0 0 * * *", "Africa/Monrovia", "1971-06-01T00:00:00Z"),
+        ("0 0 * * *", "Africa/Monrovia", "1972-01-06T12:00"),
+        ("*/30 1-3 * * *", NY, SPRING),
+        ("*/30 0-2 * * *", NY, AUTUMN),
+        ("30 2 * * *", NY, SPRING),
+        ("0 0/30 1 * * ?", NY, AUTUMN),
+        ("15,45 1-2 * * *", "Australia/Lord_Howe", "2027-04-03T12:00"),
+        (
+            "0 * * * *",
+            "America/Goose_Bay",
+            "1988-10-29T23:00:00-02:00",
+        ),
+        ("0 2 * * *", "Antarctica/Troll", "2027-03-27T12:00"),
+    ] {
+        let v = next(expr, tz, from, "8");
         for r in v["runs"].as_array().unwrap() {
             let (time, utc) = (r["time"].as_str().unwrap(), r["utc"].as_str().unwrap());
-            assert_eq!(instant(time), instant(utc), "{from}: {time} vs {utc}");
+            assert_eq!(instant(time), instant(utc), "{expr} {tz}: {time} vs {utc}");
         }
     }
     let v = next("0 0 * * *", "Africa/Monrovia", "1971-06-01T00:00:00Z", "1");

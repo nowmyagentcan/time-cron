@@ -342,3 +342,23 @@ fn opens_the_browser_unless_told_not_to() {
     assert_eq!(opened_url().as_deref(), Some(format!("{url}\n").as_str()));
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+#[test]
+#[ignore = "known bug: header names, framing and the request line aren't checked"]
+fn refuses_malformed_header_names_framing_and_request_lines() {
+    let server = Server::start(&["--no-open"]);
+    let body = r#"{"op":"explain","expression":"@daily"}"#;
+    let length = format!("Content-Length: {}", body.len());
+    let head = format!("POST /api HTTP/1.1\r\nHost: 127.0.0.1:{{port}}\r\n{length}");
+    for head in [
+        format!("{head}\r\nOrigin : http://evil.example"),
+        format!("{head}\r\nBad Header: value"),
+        format!("{head}\r\nTransfer-Encoding: chunked"),
+        head.replace("Length: ", "Length: +"),
+        head.replace(" HTTP/1.1", ""),
+        head.replace("HTTP/1.1", "XYZ"),
+    ] {
+        let status = server.send(&head, body.as_bytes()).0;
+        assert!(status >= 400, "{head}: {status}");
+    }
+}

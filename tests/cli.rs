@@ -686,3 +686,32 @@ fn servers_end_quietly_when_stdout_closes() {
         assert_eq!(err, "", "{args:?}");
     }
 }
+
+#[test]
+#[ignore = "known bug: --debug aborts when stderr is closed"]
+fn debug_answers_even_when_stderr_closes() {
+    let taken = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let port = taken.local_addr().unwrap().port().to_string();
+    for args in [
+        &[
+            "next", "@daily", "--tz", UTC, "--from", START, "--json", "--debug",
+        ][..],
+        &["explain", "@daily", "--debug"],
+        &["convert", "@daily", "--to", "aws", "--debug"],
+        &["next", "bad", "--json", "--debug"],
+        &["next", "bad", "--debug"],
+        &["ui", "--no-open", "--port", &port, "--debug"],
+    ] {
+        let want = time_cron(args).output().unwrap();
+        let mut child = time_cron(args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        drop(child.stderr.take());
+        let mut out = Vec::new();
+        child.stdout.take().unwrap().read_to_end(&mut out).unwrap();
+        let code = child.wait().unwrap().code();
+        assert_eq!((code, out), (want.status.code(), want.stdout), "{args:?}");
+    }
+}
