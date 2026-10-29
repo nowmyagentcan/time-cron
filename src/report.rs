@@ -164,13 +164,21 @@ pub struct NextArgs {
     /// Start after this time: now, 2026-11-01, 2026-11-01T09:00 (in the time zone) or 2026-11-01T09:00:00Z [default: now].
     pub from: Option<String>,
     /// Number of runs.
-    #[serde(default = "five")]
+    #[serde(default = "five", deserialize_with = "count")]
     #[schemars(range(min = 1, max = 1000))]
     pub count: usize,
 }
 
 fn five() -> usize {
     5
+}
+
+/// 1-1000, refused in words rather than in Rust's type names.
+fn count<'de, D: serde::Deserializer<'de>>(d: D) -> Result<usize, D::Error> {
+    usize::deserialize(d)
+        .ok()
+        .filter(|n| (1..=1000).contains(n))
+        .ok_or_else(|| serde::de::Error::custom("count must be a whole number between 1 and 1000"))
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -203,9 +211,6 @@ pub fn answer(request: Value) -> Result<Value, Error> {
     Ok(
         match serde_json::from_value(request).map_err(|e| bad(&e))? {
             Request::Explain(s) => json(explain(&s.expression, s.dialect.dialect())?),
-            Request::Next(n) if !(1..=1000).contains(&n.count) => {
-                return Err(bad(&"count must be between 1 and 1000"));
-            }
             Request::Next(n) => json(next(
                 &n.source.expression,
                 n.source.dialect.dialect(),
@@ -436,7 +441,15 @@ mod tests {
             (json!({"op": "explain"}), "missing field `expression`"),
             (
                 json!({"op": "next", "expression": "@daily", "count": 1001}),
-                "count must be between 1 and 1000",
+                "count must be a whole number between 1 and 1000",
+            ),
+            (
+                json!({"op": "next", "expression": "@daily", "count": 2.5}),
+                "count must be a whole number between 1 and 1000",
+            ),
+            (
+                json!({"op": "next", "expression": "@daily", "count": "3"}),
+                "count must be a whole number between 1 and 1000",
             ),
             (
                 json!({"op": "convert", "expression": "@daily", "to": "cron"}),
