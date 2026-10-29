@@ -53,8 +53,14 @@ struct Session {
 
 impl Session {
     fn answer(&mut self, typed: &str) -> String {
-        self.reply(typed)
-            .unwrap_or_else(|e| indent(&text::error(&e)))
+        self.reply(typed).unwrap_or_else(|e| {
+            // Here the dialect is a command, not the --dialect flag.
+            let e = match e.code {
+                "dialect_field_count" => e.hint("Try /dialect auto."),
+                _ => e,
+            };
+            indent(&text::error(&e))
+        })
     }
 
     fn reply(&mut self, typed: &str) -> Result<String, Error> {
@@ -216,7 +222,7 @@ mod tests {
     #[test]
     fn changes_zone_and_dialect_and_converts() {
         let got = answers(
-            "/to quartz\n/tz america/new_york\n/tz Mars/Olympus\n/dialect aws\n0 12 1 1 ? 2199\n/to quartz\n/to cobol\n/dialect\n/dialect auto\n/frob\n",
+            "/to quartz\n/tz america/new_york\n/tz Mars/Olympus\n/dialect aws\n0 9 * * 1-5\n0 12 1 1 ? 2199\n/to quartz\n/to cobol\n/dialect\n/dialect auto\n/frob\n",
         );
         assert_eq!(
             got,
@@ -225,6 +231,7 @@ mod tests {
                 "  Times in America/New_York\n\n",
                 "  ✗ Unknown time zone 'Mars/Olympus'.\n    Use an IANA name such as America/New_York, Europe/Berlin or UTC.\n\n",
                 "  Dialect: aws\n\n",
+                "  ✗ AWS cron has 6 fields; got 5.\n    Try /dialect auto.\n\n",
                 "  At 12:00, on January 1, in 2199.
   Tue 2199-01-01 12:00 -05:00
   ! EventBridge rules always run in UTC; only EventBridge Scheduler uses America/New_York.
