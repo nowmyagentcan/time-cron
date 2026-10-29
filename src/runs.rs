@@ -153,7 +153,6 @@ fn dst_warnings(s: &Schedule, tz: &TimeZone, zone: &str, from: Timestamp) -> Vec
     } else {
         "%H:%M"
     };
-    let hm = |dt: DateTime| dt.strftime("%H:%M").to_string();
     tz.following(from)
         .take_while(|t| t.timestamp() <= end)
         .filter_map(|t| {
@@ -165,6 +164,9 @@ fn dst_warnings(s: &Schedule, tz: &TimeZone, zone: &str, from: Timestamp) -> Vec
             );
             // The wall times that happen never (gap) or twice (fold).
             let (lo, hi) = if shift > 0 { (old, new) } else { (new, old) };
+            // A jump over midnight (Samoa skipped a whole day in 2011) needs the dates.
+            let fmt = if lo.date() == hi.date() { "%H:%M" } else { "%Y-%m-%d %H:%M" };
+            let hm = |dt: DateTime| dt.strftime(fmt).to_string();
             let hit: Vec<DateTime> = lo
                 .date()
                 .series(1.day())
@@ -556,6 +558,10 @@ mod tests {
         assert_eq!(warnings("30 1 * * MON-SAT", NY, AUTUMN), none());
         assert_eq!(warnings("0 9 * * *", NY, AUTUMN), none());
         assert_eq!(warnings("0 9 * * *", "UTC", AUTUMN), none());
+        // Samoa skipped 2011-12-30 when it crossed the date line.
+        assert_eq!(warnings("30 2 * * *", "Pacific/Apia", "2011-12-29T12:00"), [
+            "dst_gap: 2011-12-30: clocks jump from 2011-12-30 00:00 to 2011-12-31 00:00 in Pacific/Apia. Cron skips 02:30.",
+        ]);
     }
 
     fn none() -> Vec<String> {
