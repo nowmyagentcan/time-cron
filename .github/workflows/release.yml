@@ -143,6 +143,15 @@ jobs:
           Stop-Process $p.Id; $p.WaitForExit()
           powershell -NoProfile -File dist/install.ps1
           if ($LASTEXITCODE -or (Get-ChildItem $dir).Count -ne 1) { throw 'moved copy left behind' }
+          # An upgrade from an archive without time-cron.exe fails and keeps the installed one.
+          $zip = (Get-Item dist/*-windows-x64.zip).Name
+          New-Item -ItemType Directory empty | Out-Null
+          Compress-Archive dist/SHA256SUMS "empty/$zip"
+          "$((Get-FileHash "empty/$zip").Hash)  $zip" | Set-Content empty/SHA256SUMS
+          $env:TIME_CRON_BASE = 'http://127.0.0.1:8765/empty'
+          powershell -NoProfile -File dist/install.ps1
+          if (!$LASTEXITCODE -or (Get-ChildItem $dir).Count -ne 1) { throw 'a failed upgrade lost time-cron.exe' }
+          & "$dir\time-cron.exe" --version
   release:
     if: github.ref_type == 'tag'
     needs: smoke

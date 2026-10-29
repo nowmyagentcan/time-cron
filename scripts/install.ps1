@@ -20,9 +20,12 @@
     New-Item -ItemType Directory -Force $dir | Out-Null
     $exe = Join-Path $dir 'time-cron.exe'
     # A running time-cron (say an MCP client's server) locks its file but not its name, so
-    # move it aside; a copy still running is removed by a later install.
-    if (Test-Path $exe) { Move-Item $exe "$exe.$(Get-Random).old" }
-    Copy-Item "$tmp\x\time-cron.exe" $dir
+    # move it aside, and back if the new one can't be copied; a copy still running is removed
+    # by a later install.
+    $old = "$exe.$(Get-Random).old"
+    if (Test-Path $exe) { Move-Item $exe $old }
+    try { Copy-Item "$tmp\x\time-cron.exe" $dir }
+    catch { if (Test-Path $old) { Move-Item -Force $old $exe }; throw }
     Remove-Item "$dir\*.old" -ErrorAction SilentlyContinue
     $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
     $path = $key.GetValue('Path', '', 'DoNotExpandEnvironmentNames')
