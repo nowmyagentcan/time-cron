@@ -132,7 +132,7 @@ footer svg { width: 18px; height: 18px; }
 <script>
 const $ = s => document.querySelector(s);
 const form = $("form"), out = $("#out"), expr = $("#expr"), tz = $("#tz");
-const RULES = { unix: "Unix cron rules", quartz: "Quartz rules", aws: "EventBridge rules" };
+const RULES = { unix: "Unix cron (cronie) rules", quartz: "Quartz rules", aws: "EventBridge rules" };
 const NAMES = { unix: "Unix cron", quartz: "Quartz", aws: "AWS" };
 const icon = d => `<svg viewBox="0 0 256 256" aria-hidden="true"><path d="${d}"/></svg>`;
 const COPY = icon("M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z");
@@ -160,6 +160,7 @@ function asText(n, c, secs) {
   for (const s of n.skipped) lines.push(`  skipped ${when(s.scheduled, secs)} (DST gap)`);
   for (const w of n.warnings.concat(c?.warnings ?? [])) lines.push(`! ${w.message}`);
   if (c?.results) for (const x of c.results) lines.push(`${NAMES[c.to]}: ${x}`);
+  if (c?.error) lines.push(`Convert to ${NAMES[c.to]}: ${c.error.message}`, ...(c.error.hint ? [`  ${c.error.hint}`] : []));
   return lines.join("\n") + "\n";
 }
 
@@ -199,7 +200,7 @@ form.addEventListener("submit", async ev => {
   let n, c;
   try {
     n = await api(next);
-    if (!n.error && to) c = await api({ op: "convert", ...base, to });
+    if (!n.error && to) c = { to, ...await api({ op: "convert", ...base, to }) };
   } catch {
     n = { error: { message: "Can't reach time-cron.", hint: "Start it again with: time-cron ui" } };
   }

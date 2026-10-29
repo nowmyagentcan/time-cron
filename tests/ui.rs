@@ -40,6 +40,16 @@ fn page_has_the_title_and_one_button() {
     assert!(PAGE.contains("fetch(\"/api\""));
 }
 
+#[test]
+fn page_names_cronie_and_copies_a_failed_conversion() {
+    assert!(PAGE.contains("unix: \"Unix cron (cronie) rules\""));
+    // Copy and Save carry the conversion error the page shows, with the target asked for.
+    assert!(PAGE.contains("c = { to, ...await api({ op: \"convert\", ...base, to }) }"));
+    assert!(
+        PAGE.contains("if (c?.error) lines.push(`Convert to ${NAMES[c.to]}: ${c.error.message}`")
+    );
+}
+
 /// `time-cron ui` on a free port, stopped when dropped.
 struct Server {
     child: Child,
