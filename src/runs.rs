@@ -262,14 +262,14 @@ fn resolve(
 pub fn dst_rules(s: &Schedule) -> &'static str {
     match s.dialect {
         Dialect::Unix if s.fixed_time => {
-            "Unix cron runs a time in a gap right after the jump and a repeated time once, the first time"
+            "Unix cron runs a time in a gap right after the jump and a repeated time once, the first time, when clocks change by up to 3 hours"
         }
         Dialect::Unix => "Unix cron skips times in a gap and runs a repeated time both times",
         Dialect::Quartz => {
             "Quartz skips times in a gap and runs a repeated time once, the second time"
         }
         Dialect::Aws => {
-            "EventBridge skips times in a gap and runs a repeated time once, the first time"
+            "EventBridge Scheduler skips times in a gap and runs a repeated time once, the first time"
         }
     }
 }

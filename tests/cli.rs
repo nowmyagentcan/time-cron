@@ -466,7 +466,7 @@ fn prints_only_the_converted_expressions_on_stdout() {
         err,
         "At 00:00, on day 1 and 15 of the month, or on Friday.
 ! Quartz can't match day of month OR day of week in one expression, so this needs two triggers.
-! DST rules differ: Quartz skips times in a gap and runs a repeated time once, the second time, while Unix cron runs a time in a gap right after the jump and a repeated time once, the first time.
+! DST rules differ: Quartz skips times in a gap and runs a repeated time once, the second time, while Unix cron runs a time in a gap right after the jump and a repeated time once, the first time, when clocks change by up to 3 hours.
 "
     );
     // The source dialect can be named, and the words may come unquoted.

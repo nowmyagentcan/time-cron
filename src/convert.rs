@@ -297,7 +297,7 @@ mod tests {
                 .map(|w| w.message)
                 .collect::<Vec<_>>()
         };
-        let fixed = "Unix cron runs a time in a gap right after the jump and a repeated time once, the first time";
+        let fixed = "Unix cron runs a time in a gap right after the jump and a repeated time once, the first time, when clocks change by up to 3 hours";
         let quartz = "Quartz skips times in a gap and runs a repeated time once, the second time";
         assert_eq!(
             rules("30 2 * * *", Quartz),
@@ -310,7 +310,7 @@ mod tests {
         assert_eq!(
             rules("*/30 2 * * *", Aws),
             [
-                "DST rules differ: EventBridge skips times in a gap and runs a repeated time once, the first time, while Unix cron skips times in a gap and runs a repeated time both times."
+                "DST rules differ: EventBridge Scheduler skips times in a gap and runs a repeated time once, the first time, while Unix cron skips times in a gap and runs a repeated time both times."
             ]
         );
         assert!(rules("*/30 2 * * *", Unix).is_empty());

@@ -231,7 +231,7 @@ mod tests {
   ! Only 1 of 5 runs exist before the end of 2199.
 
 ",
-                "  0 0 12 1 1 ? 2199\n  ! DST rules differ: Quartz skips times in a gap and runs a repeated time once, the second time, while EventBridge skips times in a gap and runs a repeated time once, the first time.\n\n",
+                "  0 0 12 1 1 ? 2199\n  ! DST rules differ: Quartz skips times in a gap and runs a repeated time once, the second time, while EventBridge Scheduler skips times in a gap and runs a repeated time once, the first time.\n\n",
                 "  ✗ Unknown dialect 'cobol'.\n    Use unix, quartz or aws.\n\n",
                 "  Dialect: aws\n\n",
                 "  Dialect: auto\n\n",
