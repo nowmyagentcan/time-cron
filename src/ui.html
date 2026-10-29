@@ -87,7 +87,7 @@ footer svg { width: 18px; height: 18px; }
         </select>
       </label>
       <label>Time zone
-        <input id="tz" list="zones" autocomplete="off" spellcheck="false">
+        <input id="tz" list="zones" placeholder="This computer's (UTC for AWS)" autocomplete="off" spellcheck="false">
       </label>
     </div>
     <datalist id="zones"></datalist>
@@ -141,9 +141,6 @@ const WARN = icon("M236.8,188.09,149.35,36.22h0a24.76,24.76,0,0,0-42.7,0L19.2,18
 const FAIL = icon("M165.66,101.66,139.31,128l26.35,26.34a8,8,0,0,1-11.32,11.32L128,139.31l-26.34,26.35a8,8,0,0,1-11.32-11.32L116.69,128,90.34,101.66a8,8,0,0,1,11.32-11.32L128,116.69l26.34-26.35a8,8,0,0,1,11.32,11.32ZM232,128A104,104,0,1,1,128,24,104.11,104.11,0,0,1,232,128Zm-16,0a88,88,0,1,0-88,88A88.1,88.1,0,0,0,216,128Z");
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 
-const here = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-tz.value = here;
-tz.addEventListener("input", () => { tz.dataset.touched = "1"; }, { once: true });
 $("#zones").innerHTML = ["UTC", ...(Intl.supportedValuesOf?.("timeZone") ?? [])].map(z => `<option value="${z}">`).join("");
 
 // Answers and errors (400, 422) alike come back as JSON; a throw means the server is gone.
@@ -190,7 +187,7 @@ form.addEventListener("submit", async ev => {
   const run = ++latest;
   const base = { expression: expr.value, dialect: $("#dialect").value };
   const next = { op: "next", ...base, count: Number($("#count").value) || 10 };
-  if (tz.dataset.touched && tz.value.trim()) next.timezone = tz.value.trim();
+  if (tz.value.trim()) next.timezone = tz.value.trim();
   if ($("#from").value) next.from = $("#from").value;
   const to = $("#to").value;
   // One loading timer for the newest submit only, so an older one can't cover its result.
