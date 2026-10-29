@@ -554,6 +554,51 @@ fn reports_every_error_with_its_message_and_hint() {
 }
 
 #[test]
+fn reads_options_written_before_the_command() {
+    let cases: &[(&[&str], &[&str])] = &[
+        (
+            &["--json", "next", "0 9 * * *", "--from", START],
+            &["next", "0 9 * * *", "--from", START, "--json"],
+        ),
+        (
+            &["--json", "explain", "0 9 * * *"],
+            &["explain", "0 9 * * *", "--json"],
+        ),
+        (
+            &[
+                "--dialect",
+                "unix",
+                "--json",
+                "convert",
+                "0 9 1 * MON",
+                "--to",
+                "aws",
+            ],
+            &[
+                "convert",
+                "0 9 1 * MON",
+                "--to",
+                "aws",
+                "--dialect",
+                "unix",
+                "--json",
+            ],
+        ),
+        (
+            &["--tz", NY, "next", "0 9 * * *", "--from", START],
+            &["next", "0 9 * * *", "--from", START, "--tz", NY],
+        ),
+    ];
+    for (before, after) in cases {
+        let want = run(after);
+        assert_eq!(want.0, 0, "{after:?}");
+        assert_eq!(run(before), want, "{before:?}");
+    }
+    // `--` still ends the options.
+    assert_eq!(run(&["--dialect", "unix", "--", "next"]).0, 1);
+}
+
+#[test]
 fn turns_away_bad_usage_with_exit_2() {
     for args in [
         &["next", "0 9 * * *", "--count", "0"][..],

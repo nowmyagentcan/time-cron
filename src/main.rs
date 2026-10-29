@@ -1,10 +1,11 @@
 use anstream::eprintln;
+use std::ffi::OsString;
 use std::io::{self, ErrorKind, IsTerminal, Write};
 use std::path::Path;
 use std::process::ExitCode;
 use std::sync::LazyLock;
 
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, CommandFactory, Parser, Subcommand};
 use serde::Serialize;
 use time_cron::error::Error;
 use time_cron::report::DialectArg;
@@ -162,7 +163,7 @@ fn main() -> ExitCode {
         fail(&e);
         return ExitCode::from(2);
     }
-    let cli = match Cli::try_parse() {
+    let cli = match Cli::try_parse_from(args()) {
         Ok(cli) => cli,
         // Agents asking for JSON get clap's complaint as the JSON error object.
         Err(e) if e.use_stderr() && std::env::args_os().any(|a| a == "--json") => {
@@ -210,6 +211,22 @@ fn main() -> ExitCode {
         }
     };
     emit(&out, &notes, code)
+}
+
+/// The arguments with a command that follows options moved first, so `time-cron --json next …`
+/// reads as `time-cron next --json …` instead of an expression starting with "next".
+fn args() -> Vec<OsString> {
+    let (mut args, cli): (Vec<_>, _) = (std::env::args_os().collect(), Cli::command());
+    if args[1].to_string_lossy().starts_with('-')
+        && let Some(i) = args
+            .iter()
+            .take_while(|a| *a != "--")
+            .position(|a| cli.find_subcommand(a).is_some())
+    {
+        let command = args.remove(i);
+        args.insert(1, command);
+    }
+    args
 }
 
 /// The exit of a face that runs until its input ends.
