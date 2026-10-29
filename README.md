@@ -35,7 +35,6 @@ To remove it, delete the binary (on Windows, the `time-cron` folder above).
 
 ```sh
 time-cron "*/15 9-17 * * 1-5"                       # next 5 runs in this computer's time zone
-time-cron next "30 2 * * *" --tz America/New_York --from 2027-03-13T12:00 --count 3
 time-cron explain "0 0 12 ? * MON#2"                # what each field means, likely mistakes
 time-cron convert "0 9 * * 1-5" --to aws            # cron(0 9 ? * MON-FRI *)
 time-cron                                           # interactive: type expressions, /tz, /to, /quit
