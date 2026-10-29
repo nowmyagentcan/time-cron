@@ -344,7 +344,6 @@ fn opens_the_browser_unless_told_not_to() {
 }
 
 #[test]
-#[ignore = "known bug: header names, framing and the request line aren't checked"]
 fn refuses_malformed_header_names_framing_and_request_lines() {
     let server = Server::start(&["--no-open"]);
     let body = r#"{"op":"explain","expression":"@daily"}"#;

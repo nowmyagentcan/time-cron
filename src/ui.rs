@@ -99,14 +99,8 @@ fn handle(stream: &TcpStream, port: u16) -> io::Result<()> {
 }
 
 fn respond(reader: &mut BufReader<io::Take<&TcpStream>>, port: u16) -> io::Result<Response> {
-    let mut line = String::new();
-    reader.read_line(&mut line)?;
-    let mut words = line.split_whitespace();
-    let route = format!(
-        "{} {}",
-        words.next().unwrap_or(""),
-        words.next().unwrap_or("")
-    );
+    let (mut request, mut line) = (String::new(), String::new());
+    reader.read_line(&mut request)?;
     let (mut host, mut origin, mut length) = (None, None, None);
     loop {
         line.clear();
@@ -123,13 +117,26 @@ fn respond(reader: &mut BufReader<io::Take<&TcpStream>>, port: u16) -> io::Resul
         if line.trim_end_matches(['\r', '\n']).is_empty() {
             break;
         }
-        let Some((name, value)) = line.split_once(':') else {
+        let token = |n: &str| {
+            !n.is_empty()
+                && n.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b))
+        };
+        let Some((name, value)) = line.split_once(':').filter(|(n, _)| token(n)) else {
             return Ok(error(400, "bad_request", "Can't read a request header."));
         };
         let field = match name.to_ascii_lowercase().as_str() {
             "host" => &mut host,
             "origin" => &mut origin,
             "content-length" => &mut length,
+            // Bodies come only with a Content-Length; chunked ones aren't read.
+            "transfer-encoding" => {
+                return Ok(error(
+                    400,
+                    "bad_request",
+                    "Send the body with a Content-Length.",
+                ));
+            }
             _ => continue,
         };
         // A second value could disagree with the first one checked (RFC 9112 §3.2, §6.3).
@@ -137,6 +144,12 @@ fn respond(reader: &mut BufReader<io::Take<&TcpStream>>, port: u16) -> io::Resul
             return Ok(error(400, "bad_request", "A request header is repeated."));
         }
     }
+    let mut parts = request.trim_end_matches(['\r', '\n']).split(' ');
+    let (Some(method), Some(target), Some("HTTP/1.1" | "HTTP/1.0"), None) =
+        (parts.next(), parts.next(), parts.next(), parts.next())
+    else {
+        return Ok(error(400, "bad_request", "Can't read the request line."));
+    };
     let local = |scheme: &str, value: &str| {
         ["127.0.0.1", "localhost"]
             .iter()
@@ -149,10 +162,13 @@ fn respond(reader: &mut BufReader<io::Take<&TcpStream>>, port: u16) -> io::Resul
             "Only this computer's page can use time-cron ui.",
         ));
     }
-    match route.as_str() {
-        "GET /" => Ok((200, "text/html; charset=utf-8", PAGE.into())),
-        "POST /api" => {
-            let Some(length) = length.map_or(Some(0), |l| l.parse::<u64>().ok()) else {
+    match (method, target) {
+        ("GET", "/") => Ok((200, "text/html; charset=utf-8", PAGE.into())),
+        ("POST", "/api") => {
+            // Digits only: Rust would also read a leading `+`.
+            let digits = |l: &String| l.bytes().all(|b| b.is_ascii_digit());
+            let Some(length) = length.map_or(Some(0), |l| l.parse().ok().filter(|_| digits(&l)))
+            else {
                 return Ok(error(400, "bad_request", "Can't read the request length."));
             };
             if length > LIMIT {
