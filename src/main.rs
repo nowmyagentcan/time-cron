@@ -1,3 +1,4 @@
+use anstream::eprintln;
 use std::io::{self, ErrorKind, IsTerminal, Write};
 use std::path::Path;
 use std::process::ExitCode;

@@ -688,7 +688,6 @@ fn servers_end_quietly_when_stdout_closes() {
 }
 
 #[test]
-#[ignore = "known bug: --debug aborts when stderr is closed"]
 fn debug_answers_even_when_stderr_closes() {
     let taken = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
     let port = taken.local_addr().unwrap().port().to_string();
